@@ -9,16 +9,15 @@
 //   o:  node scripts/seed-postgres.js
 // ============================================================
 
-import { PrismaClient } from "@prisma/client";
-import bcrypt from "bcryptjs";
-import path from "path";
-import fs from "fs";
-import dotenv from "dotenv";
+const { PrismaClient } = require("@prisma/client");
+const bcrypt = require("bcryptjs");
+const path = require("path");
+const fs = require("fs");
 
 // Cargar .env manualmente con override=true
 const envPath = path.join(__dirname, "..", ".env");
 if (fs.existsSync(envPath)) {
-  dotenv.config({ path: envPath, override: true });
+  require("dotenv").config({ path: envPath, override: true });
 }
 
 if (!process.env.DATABASE_URL) {
@@ -227,31 +226,35 @@ async function main() {
   const operarios = [
     {
       id: "op-1",
-      nombre: "Diego Ramírez",
-      telefono: "+53 5 555 0005",
-      especialidad: "INFORMATICA",
+      nombre: "Jonathan",
+      telefono: "+53 0 000 0001",
+      especialidad: "VENDEDOR",
       activo: true,
+      tallerId: "taller-1",
     },
     {
       id: "op-2",
-      nombre: "Sofía Castro",
-      telefono: "+53 5 555 0006",
-      especialidad: "ELECTRONICA",
+      nombre: "Lili",
+      telefono: "+53 0 000 0002",
+      especialidad: "VENDEDOR",
       activo: true,
+      tallerId: "taller-1",
     },
     {
       id: "op-3",
-      nombre: "Miguel Torres",
-      telefono: "+53 5 555 0007",
-      especialidad: "ELECTRONICA",
+      nombre: "Juan",
+      telefono: "+53 0 000 0003",
+      especialidad: "INFORMATICA",
       activo: true,
+      tallerId: "taller-1",
     },
     {
       id: "op-4",
-      nombre: "Ana Vargas",
-      telefono: "+53 5 555 0008",
+      nombre: "Wilber",
+      telefono: "+53 0 000 0004",
       especialidad: "INFORMATICA",
       activo: true,
+      tallerId: "taller-1",
     },
   ];
   for (const o of operarios) {

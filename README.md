@@ -38,13 +38,13 @@ npm run db:seed
 npm run dev
 ```
 
-Login: `superadmin@tereparo.com` / `admin123`
+Login: `superadmin@tereparo.mx` / `admin123`
 
 ## ☁️ Despliegue en Railway
 
 La app está preparada para desplegar en Railway con Dockerfile + PostgreSQL.
 
-**Pasos resumidos** (guía completa en [RAILWAY_DEPLOY.md](./docs/RAILWAY_DEPLOY.md)):
+**Pasos resumidos** (guía completa en [RAILWAY_DEPLOY.md](./RAILWAY_DEPLOY.md)):
 
 1. Sube el repo a GitHub.
 2. Crea un proyecto en [railway.app](https://railway.app) con **PostgreSQL plugin**.

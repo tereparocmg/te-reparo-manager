@@ -1,88 +1,103 @@
-'use client'
+"use client";
 
-import { useState } from 'react'
-import { useStore } from '@/lib/store'
-import { useDataService } from '@/lib/electron-adapter'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { ThemeToggle } from '@/components/theme-toggle'
-import { Wrench, ShieldCheck, UserCog, ShoppingCart, ChevronRight, Eye, EyeOff, Loader2 } from 'lucide-react'
-import { ROL_LABELS, type RolUsuario } from '@/lib/types'
-import { toast } from 'sonner'
+import { useState } from "react";
+// import { useStore } from "@/lib/store";
+import { useDataService } from "@/lib/electron-adapter";
+import { Button } from "@/components/ui/button";
+// import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { ThemeToggle } from "@/components/theme-toggle";
+import {
+  Wrench,
+  // ShieldCheck,
+  // UserCog,
+  // ShoppingCart,
+  // ChevronRight,
+  Eye,
+  EyeOff,
+  Loader2,
+} from "lucide-react";
+// import { ROL_LABELS, type RolUsuario } from "@/lib/types";
+import { toast } from "sonner";
 
-const ROLES_DEMO: { rol: RolUsuario; icon: any; email: string; password: string; descripcion: string }[] = [
+/* const ROLES_DEMO: {
+  rol: RolUsuario;
+  icon: any;
+  email: string;
+  password: string;
+  descripcion: string;
+}[] = [
   {
-    rol: 'SUPER_ADMIN',
+    rol: "SUPER_ADMIN",
     icon: ShieldCheck,
-    email: 'superadmin@tereparo.mx',
-    password: 'admin123',
-    descripcion: 'Control total. Visualiza y gestiona todos los talleres.',
+    email: "superadmin@tereparo.mx",
+    password: "admin123",
+    descripcion: "Control total. Visualiza y gestiona todos los talleres.",
   },
   {
-    rol: 'ADMIN',
+    rol: "ADMIN",
     icon: UserCog,
-    email: 'admin.centro@tereparo.mx',
-    password: 'admin123',
-    descripcion: 'Administra su(s) taller(es) asignado(s).',
+    email: "admin.centro@tereparo.mx",
+    password: "admin123",
+    descripcion: "Administra su(s) taller(es) asignado(s).",
   },
   {
-    rol: 'VENDEDOR',
+    rol: "VENDEDOR",
     icon: ShoppingCart,
-    email: 'vendedor@tereparo.mx',
-    password: 'vendedor123',
-    descripcion: 'Punto de venta. Registra ventas al cliente general.',
+    email: "vendedor@tereparo.mx",
+    password: "vendedor123",
+    descripcion: "Punto de venta. Registra ventas al cliente general.",
   },
-]
-
+];
+ */
 export function LoginScreen() {
-  const loginAs = useStore((s) => s.loginAs)
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [showPassword, setShowPassword] = useState(false)
-  const [loading, setLoading] = useState(false)
+  /*   const loginAs = useStore((s) => s.loginAs);
+   */ const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (loading) return
-    setLoading(true)
+    e.preventDefault();
+    if (loading) return;
+    setLoading(true);
     try {
       // useDataService enruta a Electron IPC cuando hay electronAPI,
       // y hace fallback a Zustand login en modo web puro.
-      const ok = await useDataService().login(email, password)
+      const ok = await useDataService().login(email, password);
       if (!ok) {
-        toast.error('Credenciales incorrectas', {
-          description: 'Verifica tu correo y contraseña.',
-        })
+        toast.error("Credenciales incorrectas", {
+          description: "Verifica tu correo y contraseña.",
+        });
       } else {
-        toast.success('Bienvenido a Te Reparo Manager')
+        toast.success("Bienvenido a Te Reparo Manager");
       }
     } catch (err: any) {
-      toast.error('Error al iniciar sesión', { description: err?.message })
+      toast.error("Error al iniciar sesión", { description: err?.message });
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
-  const quickLogin = async (rol: RolUsuario) => {
-    if (loading) return
-    setLoading(true)
+  /*   const quickLogin = async (rol: RolUsuario) => {
+    if (loading) return;
+    setLoading(true);
     try {
-      const demo = ROLES_DEMO.find((r) => r.rol === rol)
-      if (!demo) return
-      const ok = await useDataService().login(demo.email, demo.password)
+      const demo = ROLES_DEMO.find((r) => r.rol === rol);
+      if (!demo) return;
+      const ok = await useDataService().login(demo.email, demo.password);
       if (!ok) {
         // Fallback: usar loginAs de Zustand (modo web con datos semilla)
-        loginAs(rol)
+        loginAs(rol);
       }
-      toast.success(`Sesión iniciada como ${ROL_LABELS[rol]}`)
+      toast.success(`Sesión iniciada como ${ROL_LABELS[rol]}`);
     } catch (err: any) {
-      toast.error('Error al iniciar sesión', { description: err?.message })
+      toast.error("Error al iniciar sesión", { description: err?.message });
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  }; */
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -93,42 +108,62 @@ export function LoginScreen() {
 
       <div className="flex-1 grid lg:grid-cols-2">
         {/* Lado izquierdo — Branding */}
-        <div className="relative hidden lg:flex flex-col justify-between p-12 text-white overflow-hidden" style={{ backgroundColor: '#1A1A1A' }}>
-          <div className="absolute inset-0 opacity-10" style={{
-            backgroundImage: 'radial-gradient(circle at 20% 50%, #E63946 0%, transparent 50%), radial-gradient(circle at 80% 80%, #E63946 0%, transparent 40%)'
-          }} />
+        <div
+          className="relative hidden lg:flex flex-col justify-between p-12 text-white overflow-hidden"
+          style={{ backgroundColor: "#1A1A1A" }}
+        >
+          <div
+            className="absolute inset-0 opacity-10"
+            style={{
+              backgroundImage:
+                "radial-gradient(circle at 20% 50%, #E63946 0%, transparent 50%), radial-gradient(circle at 80% 80%, #E63946 0%, transparent 40%)",
+            }}
+          />
           <div className="relative z-10">
             <div className="flex items-center gap-3 mb-12">
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl" style={{ backgroundColor: '#E63946' }}>
+              <div
+                className="flex h-12 w-12 items-center justify-center rounded-xl"
+                style={{ backgroundColor: "#E63946" }}
+              >
                 <Wrench className="h-6 w-6 text-white" />
               </div>
               <div>
                 <h1 className="text-2xl font-black">Te Reparo</h1>
-                <p className="text-xs text-gray-400">Manager · Sistema de Gestión</p>
+                <p className="text-xs text-gray-400">
+                  Manager · Sistema de Gestión
+                </p>
               </div>
             </div>
 
             <div className="space-y-6">
               <h2 className="text-4xl font-black leading-tight">
-                Gestiona tu taller<br />
-                <span style={{ color: '#E63946' }}>de reparaciones</span><br />
+                Gestiona tu taller
+                <br />
+                <span style={{ color: "#E63946" }}>de reparaciones</span>
+                <br />
                 como un profesional.
               </h2>
               <p className="text-gray-400 max-w-md">
-                Inventario dual, punto de venta, órdenes de servicio con garantía,
-                múltiples sucursales y reportes consolidados en una sola plataforma.
+                Inventario dual, punto de venta, órdenes de servicio con
+                garantía, múltiples sucursales y reportes consolidados en una
+                sola plataforma.
               </p>
               <div className="grid grid-cols-2 gap-3 max-w-md">
                 {[
-                  { label: 'Multi-sucursal', value: '✓' },
-                  { label: 'Inventario dual', value: '✓' },
-                  { label: 'POS integrado', value: '✓' },
-                  { label: 'Garantías', value: '✓' },
-                  { label: 'Excel export', value: '✓' },
-                  { label: 'Roles y permisos', value: '✓' },
+                  { label: "Multi-sucursal", value: "✓" },
+                  { label: "Inventario dual", value: "✓" },
+                  { label: "POS integrado", value: "✓" },
+                  { label: "Garantías", value: "✓" },
+                  { label: "Excel export", value: "✓" },
+                  { label: "Roles y permisos", value: "✓" },
                 ].map((f) => (
-                  <div key={f.label} className="flex items-center gap-2 text-sm">
-                    <span style={{ color: '#E63946' }} className="font-bold">{f.value}</span>
+                  <div
+                    key={f.label}
+                    className="flex items-center gap-2 text-sm"
+                  >
+                    <span style={{ color: "#E63946" }} className="font-bold">
+                      {f.value}
+                    </span>
                     <span className="text-gray-300">{f.label}</span>
                   </div>
                 ))}
@@ -168,7 +203,7 @@ export function LoginScreen() {
                 <Input
                   id="email"
                   type="email"
-                  placeholder="tucorreo@tereparo.mx"
+                  placeholder="tucorreo@tereparo.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
@@ -180,7 +215,7 @@ export function LoginScreen() {
                 <div className="relative">
                   <Input
                     id="password"
-                    type={showPassword ? 'text' : 'password'}
+                    type={showPassword ? "text" : "password"}
                     placeholder="••••••••"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
@@ -194,24 +229,33 @@ export function LoginScreen() {
                     className="absolute right-0 top-0 h-10 w-10"
                     onClick={() => setShowPassword(!showPassword)}
                   >
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    {showPassword ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
                   </Button>
                 </div>
               </div>
-              <Button type="submit" className="w-full" size="lg" disabled={loading}>
+              <Button
+                type="submit"
+                className="w-full"
+                size="lg"
+                disabled={loading}
+              >
                 {loading ? (
                   <>
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                     Ingresando...
                   </>
                 ) : (
-                  'Ingresar al sistema'
+                  "Ingresar al sistema"
                 )}
               </Button>
             </form>
 
             {/* Acceso rápido por rol */}
-            <div className="pt-4 border-t">
+            {/*             <div className="pt-4 border-t">
               <p className="text-xs text-center text-muted-foreground mb-3">
                 Acceso rápido de demostración (clic para entrar)
               </p>
@@ -234,10 +278,10 @@ export function LoginScreen() {
                   </button>
                 ))}
               </div>
-            </div>
+            </div> */}
           </div>
         </div>
       </div>
     </div>
-  )
+  );
 }

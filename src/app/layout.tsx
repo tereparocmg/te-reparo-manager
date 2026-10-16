@@ -17,8 +17,17 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Te Reparo Manager — Sistema de Gestión de Taller",
-  description: "Sistema integral de gestión para talleres de reparación. Inventario dual, POS, órdenes de servicio con garantía, multi-sucursal.",
-  keywords: ["Te Reparo", "taller", "reparación", "gestión", "POS", "inventario", "garantías"],
+  description:
+    "Sistema integral de gestión para talleres de reparación. Inventario dual, POS, órdenes de servicio con garantía, multi-sucursal.",
+  keywords: [
+    "Te Reparo",
+    "taller",
+    "reparación",
+    "gestión",
+    "POS",
+    "inventario",
+    "garantías",
+  ],
   authors: [{ name: "Te Reparo" }],
 };
 
@@ -29,6 +38,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es" suppressHydrationWarning>
+      <head>
+        <link rel="icon" href="/logo.png" />
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >

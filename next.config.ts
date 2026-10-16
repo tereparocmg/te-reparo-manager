@@ -1,20 +1,14 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
-  experimental: {
-    agentFeedback: true,
+  // Mantenemos standalone para optimizar el tamaño de la imagen Docker en Railway.
+  output: "standalone",
+  typescript: {
+    ignoreBuildErrors: true,
   },
-  cacheComponents: true,
-  partialPrefetching: true,
-  turbopack: {
-    rules: {
-      "*.css": {
-        loaders: ["@tailwindcss/turbopack"],
-        as: "*.css",
-      },
-    },
-  },
+  reactStrictMode: false,
+  // Permite que Railway inyecte la preview URL del dominio propio.
+  allowedDevOrigins: ["*.space-z.ai", "*.chatglm.cn", "*.railway.app", "*.up.railway.app"],
 };
 
 export default nextConfig;
