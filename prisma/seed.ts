@@ -157,8 +157,8 @@ async function main() {
 
   // ---------- Tasas de cambio iniciales (actualizables desde la app) ----------
   for (const [moneda, valor] of [
-    ['USD', 440],
-    ['EUR', 470],
+    ['USD', 910],
+    ['EUR', 1000],
   ] as const) {
     const existente = await db.tasaCambio.findFirst({
       where: { moneda },
