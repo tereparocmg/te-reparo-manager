@@ -18,7 +18,8 @@
     "db:start": "bun scripts/pg.ts start",
     "db:stop": "bun scripts/pg.ts stop",
     "db:status": "bun scripts/pg.ts status",
-    "db:migrar-sqlite": "bun scripts/migrar-sqlite-a-postgres.ts"
+    "db:migrar-sqlite": "bun scripts/migrar-sqlite-a-postgres.ts",
+    "postinstall": "prisma generate || true"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
