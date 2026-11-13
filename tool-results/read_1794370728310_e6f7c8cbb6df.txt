@@ -1,0 +1,812 @@
+     1→'use client'
+     2→import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+     3→import { Button } from '@/components/ui/button'
+     4→import { Input } from '@/components/ui/input'
+     5→import { Label } from '@/components/ui/label'
+     6→import { Badge } from '@/components/ui/badge'
+     7→import { Card, CardContent } from '@/components/ui/card'
+     8→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+     9→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+    10→import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+    11→import { toast } from 'sonner'
+    12→import { Plus, PackagePlus, Trash2, History, ArrowLeftRight, Pencil, Search, Tag, Printer } from 'lucide-react'
+    13→import { api } from '@/lib/api-client'
+    14→import { useApp } from '@/lib/store'
+    15→import { fmt, fmtCUP, esServicio, TIPO_PRODUCTO_LABEL, MOVIMIENTO_LABEL, fmtFechaHora } from '@/lib/formato'
+    16→import { code128Svg } from '@/lib/barcode'
+    17→import { useGuardarConCtrlS } from '@/hooks/use-ctrl-s'
+    18→import { useTablaTeclado } from '@/hooks/use-tabla-teclado'
+    19→import { ConfirmarPeligroso } from '../confirmar-peligroso'
+    20→import { Kbd } from '../kbd'
+    21→
+    22→interface Producto {
+    23→  id: string
+    24→  nombre: string
+    25→  categoria: string
+    26→  tipo: string
+    27→  cantidad: number
+    28→  costo?: number
+    29→  unidad: string
+    30→  stockMinimo?: number
+    31→  precio: number
+    32→  monedaPrecio: string
+    33→  pagoOperarioTipo?: string
+    34→  pagoOperarioValor?: number
+    35→  garantiaDias?: number
+    36→  codigoInterno: string
+    37→  codigoBarras: string
+    38→  activo: boolean
+    39→}
+    40→
+    41→interface Movimiento {
+    42→  id: string
+    43→  tipo: string
+    44→  cantidad: number
+    45→  costoUnitario: number
+    46→  nota: string | null
+    47→  fecha: string
+    48→  usuario: { nombre: string } | null
+    49→  producto: { nombre: string; codigoInterno: string }
+    50→}
+    51→
+    52→interface Taller { id: string; nombre: string; activo: boolean }
+    53→
+    54→const TIPOS = ['VENTA', 'SERVICIO_ELECTRONICA', 'SERVICIO_INFORMATICA']
+    55→const MONEDAS = ['CUP', 'USD', 'EUR']
+    56→
+    57→const FORM_VACIO = {
+    58→  nombre: '',
+    59→  categoria: '',
+    60→  tipo: 'VENTA',
+    61→  precio: '',
+    62→  monedaPrecio: 'CUP',
+    63→  unidad: 'u',
+    64→  cantidadInicial: '0',
+    65→  costo: '0',
+    66→  stockMinimo: '0',
+    67→  pagoOperarioTipo: 'FIJO',
+    68→  pagoOperarioValor: '0',
+    69→  garantiaDias: '0',
+    70→}
+    71→
+    72→export function Inventario() {
+    73→  const usuario = useApp((s) => s.usuario)
+    74→  const tallerActivoId = useApp((s) => s.tallerActivoId)
+    75→  const talleres = useApp((s) => s.talleres)
+    76→  const esAdmin = usuario?.rol === 'ADMIN'
+    77→  const tallerId = usuario?.rol === 'VENDEDOR' ? usuario.tallerId : tallerActivoId ?? talleres[0]?.id
+    78→
+    79→  const [productos, setProductos] = useState<Producto[]>([])
+    80→  const [categorias, setCategorias] = useState<string[]>([])
+    81→  const [filtros, setFiltros] = useState({ q: '', categoria: '', tipo: '', stockBajo: '', activo: 'true' })
+    82→  const [cargando, setCargando] = useState(true)
+    83→
+    84→  const [modalProducto, setModalProducto] = useState(false)
+    85→  const [productoEdit, setProductoEdit] = useState<{ id: string | null; datos: typeof FORM_VACIO }>({ id: null, datos: FORM_VACIO })
+    86→
+    87→  const [modalEntrada, setModalEntrada] = useState(false)
+    88→  const [modalBaja, setModalBaja] = useState(false)
+    89→  const [modalTransfer, setModalTransfer] = useState(false)
+    90→  const [productoAccion, setProductoAccion] = useState<Producto | null>(null)
+    91→  const [formEntrada, setFormEntrada] = useState({ cantidad: '', costoUnitario: '', nota: '' })
+    92→  const [formBaja, setFormBaja] = useState({ cantidad: '', motivo: '' })
+    93→  const [formTransfer, setFormTransfer] = useState({ tallerDestinoId: '', cantidad: '', nota: '' })
+    94→  const [listaTalleres, setListaTalleres] = useState<Taller[]>([])
+    95→  const [modalHistorial, setModalHistorial] = useState(false)
+    96→  const [movimientos, setMovimientos] = useState<Movimiento[]>([])
+    97→  const [modalEtiqueta, setModalEtiqueta] = useState(false)
+    98→
+    99→  const cargar = useCallback(async () => {
+   100→    if (!tallerId) return
+   101→    setCargando(true)
+   102→    try {
+   103→      const params = new URLSearchParams({ tallerId })
+   104→      if (filtros.q) params.set('q', filtros.q)
+   105→      if (filtros.categoria) params.set('categoria', filtros.categoria)
+   106→      if (filtros.tipo) params.set('tipo', filtros.tipo)
+   107→      if (filtros.stockBajo) params.set('stockBajo', filtros.stockBajo)
+   108→      if (filtros.activo) params.set('activo', filtros.activo)
+   109→      const res = await api.get<{ productos: Producto[]; categorias: string[] }>(`/api/productos?${params}`)
+   110→      setProductos(res.productos)
+   111→      setCategorias(res.categorias)
+   112→    } catch (e) {
+   113→      toast.error(e instanceof Error ? e.message : 'Error al cargar inventario')
+   114→    } finally {
+   115→      setCargando(false)
+   116→    }
+   117→  }, [tallerId, filtros])
+   118→
+   119→  useEffect(() => {
+   120→    cargar()
+   121→  }, [cargar])
+   122→
+   123→  useEffect(() => {
+   124→    if (esAdmin) {
+   125→      api.get<{ talleres: Taller[] }>('/api/talleres').then((r) => setListaTalleres(r.talleres)).catch(() => {})
+   126→    }
+   127→  }, [esAdmin])
+   128→
+   129→  async function abrirHistorial(p: Producto) {
+   130→    setProductoAccion(p)
+   131→    setModalHistorial(true)
+   132→    try {
+   133→      const res = await api.get<{ movimientos: Movimiento[] }>(`/api/movimientos?productoId=${p.id}`)
+   134→      setMovimientos(res.movimientos)
+   135→    } catch (e) {
+   136→      toast.error(e instanceof Error ? e.message : 'Error al cargar movimientos')
+   137→    }
+   138→  }
+   139→
+   140→  function abrirNuevo() {
+   141→    setProductoEdit({ id: null, datos: { ...FORM_VACIO } })
+   142→    setModalProducto(true)
+   143→  }
+   144→
+   145→  function abrirEditar(p: Producto) {
+   146→    setProductoEdit({
+   147→      id: p.id,
+   148→      datos: {
+   149→        nombre: p.nombre,
+   150→        categoria: p.categoria,
+   151→        tipo: p.tipo,
+   152→        precio: String(p.precio),
+   153→        monedaPrecio: p.monedaPrecio,
+   154→        unidad: p.unidad,
+   155→        cantidadInicial: String(p.cantidad),
+   156→        costo: String(p.costo ?? 0),
+   157→        stockMinimo: String(p.stockMinimo ?? 0),
+   158→        pagoOperarioTipo: p.pagoOperarioTipo ?? 'FIJO',
+   159→        pagoOperarioValor: String(p.pagoOperarioValor ?? 0),
+   160→        garantiaDias: String(p.garantiaDias ?? 0),
+   161→      },
+   162→    })
+   163→    setModalProducto(true)
+   164→  }
+   165→
+   166→  async function guardarProducto() {
+   167→    const d = productoEdit.datos
+   168→    if (d.nombre.trim().length < 2 || !d.categoria.trim() || !d.precio) {
+   169→      toast.error('Complete nombre, categoría y precio')
+   170→      return
+   171→    }
+   172→    try {
+   173→      const cuerpo: Record<string, unknown> = {
+   174→        nombre: d.nombre.trim(),
+   175→        categoria: d.categoria.trim(),
+   176→        tipo: d.tipo,
+   177→        precio: parseFloat(d.precio),
+   178→        monedaPrecio: d.monedaPrecio,
+   179→        unidad: d.unidad,
+   180→      }
+   181→      if (esAdmin) {
+   182→        cuerpo.costo = parseFloat(d.costo || '0')
+   183→        cuerpo.stockMinimo = parseInt(d.stockMinimo || '0', 10)
+   184→        cuerpo.pagoOperarioTipo = d.pagoOperarioTipo
+   185→        cuerpo.pagoOperarioValor = parseFloat(d.pagoOperarioValor || '0')
+   186→        cuerpo.garantiaDias = parseInt(d.garantiaDias || '0', 10)
+   187→      }
+   188→      if (!productoEdit.id) {
+   189→        await api.post(`/api/productos`, { ...cuerpo, tallerId, cantidad: esAdmin ? parseInt(d.cantidadInicial || '0', 10) : 0 })
+   190→        toast.success('Producto creado')
+   191→      } else {
+   192→        await api.patch(`/api/productos?id=${productoEdit.id}`, cuerpo)
+   193→        toast.success('Producto actualizado')
+   194→      }
+   195→      setModalProducto(false)
+   196→      cargar()
+   197→    } catch (e) {
+   198→      toast.error(e instanceof Error ? e.message : 'Error al guardar producto')
+   199→    }
+   200→  }
+   201→
+   202→  async function toggleActivo(p: Producto) {
+   203→    try {
+   204→      await api.patch(`/api/productos?id=${p.id}`, { activo: !p.activo })
+   205→      toast.success(p.activo ? 'Producto desactivado' : 'Producto activado')
+   206→      cargar()
+   207→    } catch (e) {
+   208→      toast.error(e instanceof Error ? e.message : 'Error')
+   209→    }
+   210→  }
+   211→
+   212→  async function registrarEntrada() {
+   213→    if (!productoAccion) return
+   214→    try {
+   215→      await api.post('/api/movimientos', {
+   216→        tipo: 'ENTRADA',
+   217→        productoId: productoAccion.id,
+   218→        cantidad: parseInt(formEntrada.cantidad, 10),
+   219→        ...(formEntrada.costoUnitario ? { costoUnitario: parseFloat(formEntrada.costoUnitario) } : {}),
+   220→        nota: formEntrada.nota || undefined,
+   221→      })
+   222→      toast.success('Entrada registrada')
+   223→      setModalEntrada(false)
+   224→      setFormEntrada({ cantidad: '', costoUnitario: '', nota: '' })
+   225→      cargar()
+   226→    } catch (e) {
+   227→      toast.error(e instanceof Error ? e.message : 'Error al registrar entrada')
+   228→    }
+   229→  }
+   230→
+   231→  async function registrarBaja() {
+   232→    if (!productoAccion) return
+   233→    try {
+   234→      await api.post('/api/movimientos', {
+   235→        tipo: 'BAJA_DEFECTUOSO',
+   236→        productoId: productoAccion.id,
+   237→        cantidad: parseInt(formBaja.cantidad, 10),
+   238→        motivo: formBaja.motivo,
+   239→      })
+   240→      toast.success('Baja por defectuoso registrada')
+   241→      setModalBaja(false)
+   242→      setFormBaja({ cantidad: '', motivo: '' })
+   243→      cargar()
+   244→    } catch (e) {
+   245→      toast.error(e instanceof Error ? e.message : 'Error al registrar baja')
+   246→    }
+   247→  }
+   248→
+   249→  async function registrarTransferencia() {
+   250→    if (!productoAccion) return
+   251→    try {
+   252→      await api.post('/api/transferencias', {
+   253→        productoId: productoAccion.id,
+   254→        tallerDestinoId: formTransfer.tallerDestinoId,
+   255→        cantidad: parseInt(formTransfer.cantidad, 10),
+   256→        nota: formTransfer.nota || undefined,
+   257→      })
+   258→      toast.success('Transferencia realizada')
+   259→      setModalTransfer(false)
+   260→      setFormTransfer({ tallerDestinoId: '', cantidad: '', nota: '' })
+   261→      cargar()
+   262→    } catch (e) {
+   263→      toast.error(e instanceof Error ? e.message : 'Error al transferir')
+   264→    }
+   265→  }
+   266→
+   267→  const productosVisibles = useMemo(() => productos, [productos])
+   268→
+   269→  // ---- Ctrl+S guarda el formulario/modal abierto ----
+   270→  useGuardarConCtrlS(
+   271→    () => {
+   272→      if (modalProducto) guardarProducto()
+   273→      else if (modalEntrada) registrarEntrada()
+   274→      else if (modalBaja) registrarBaja()
+   275→      else if (modalTransfer) registrarTransferencia()
+   276→    },
+   277→    modalProducto || modalEntrada || modalBaja || modalTransfer
+   278→  )
+   279→
+   280→  // ---- Navegación por teclado en la tabla (↑↓ Enter Supr) ----
+   281→  const suprArmado = useRef<{ i: number; t: number } | null>(null)
+   282→  function suprFila(i: number) {
+   283→    if (!esAdmin) return
+   284→    const p = productosVisibles[i]
+   285→    if (!p) return
+   286→    if (!p.activo) {
+   287→      toast.info('El producto ya está inactivo')
+   288→      return
+   289→    }
+   290→    const ahora = Date.now()
+   291→    if (suprArmado.current?.i === i && ahora - suprArmado.current.t < 4000) {
+   292→      suprArmado.current = null
+   293→      toggleActivo(p)
+   294→    } else {
+   295→      suprArmado.current = { i, t: ahora }
+   296→      toast.warning(`Pulse Supr de nuevo para desactivar «${p.nombre}»`, { duration: 4000 })
+   297→    }
+   298→  }
+   299→  const { propsFila, indice: filaSel } = useTablaTeclado({
+   300→    total: productosVisibles.length,
+   301→    onAbrir: (i) => abrirEditar(productosVisibles[i]),
+   302→    onEliminar: suprFila,
+   303→  })
+   304→
+   305→  return (
+   306→    <div className="space-y-4">
+   307→      <div className="flex items-center justify-between flex-wrap gap-2">
+   308→        <h1 className="text-xl font-bold">Inventario</h1>
+   309→        <Button onClick={abrirNuevo}>
+   310→          <Plus className="h-4 w-4 mr-1" /> Nuevo producto
+   311→        </Button>
+   312→      </div>
+   313→
+   314→      {/* Filtros */}
+   315→      <Card>
+   316→        <CardContent className="p-3 flex flex-wrap gap-2 items-center">
+   317→          <div className="relative flex-1 min-w-[200px]">
+   318→            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" aria-hidden />
+   319→            <Input
+   320→              value={filtros.q}
+   321→              onChange={(e) => setFiltros((f) => ({ ...f, q: e.target.value }))}
+   322→              placeholder="Buscar por nombre o código…"
+   323→              className="pl-8"
+   324→              aria-label="Buscar producto"
+   325→            />
+   326→          </div>
+   327→          <Select value={filtros.categoria} onValueChange={(v) => setFiltros((f) => ({ ...f, categoria: v === '__todos__' ? '' : v }))}>
+   328→            <SelectTrigger className="w-[160px]" aria-label="Categoría">
+   329→              <SelectValue placeholder="Categoría" />
+   330→            </SelectTrigger>
+   331→            <SelectContent>
+   332→              <SelectItem value="__todos__">Todas</SelectItem>
+   333→              {categorias.map((c) => (
+   334→                <SelectItem key={c} value={c}>{c}</SelectItem>
+   335→              ))}
+   336→            </SelectContent>
+   337→          </Select>
+   338→          <Select value={filtros.tipo} onValueChange={(v) => setFiltros((f) => ({ ...f, tipo: v === '__todos__' ? '' : v }))}>
+   339→            <SelectTrigger className="w-[170px]" aria-label="Tipo">
+   340→              <SelectValue placeholder="Tipo" />
+   341→            </SelectTrigger>
+   342→            <SelectContent>
+   343→              <SelectItem value="__todos__">Todos</SelectItem>
+   344→              {TIPOS.map((t) => (
+   345→                <SelectItem key={t} value={t}>{TIPO_PRODUCTO_LABEL[t]}</SelectItem>
+   346→              ))}
+   347→            </SelectContent>
+   348→          </Select>
+   349→          <Select value={filtros.stockBajo} onValueChange={(v) => setFiltros((f) => ({ ...f, stockBajo: v === '__todos__' ? '' : v }))}>
+   350→            <SelectTrigger className="w-[150px]" aria-label="Stock bajo">
+   351→              <SelectValue placeholder="Stock" />
+   352→            </SelectTrigger>
+   353→            <SelectContent>
+   354→              <SelectItem value="__todos__">Todo el stock</SelectItem>
+   355→              <SelectItem value="true">Solo stock bajo</SelectItem>
+   356→            </SelectContent>
+   357→          </Select>
+   358→          <Select value={filtros.activo} onValueChange={(v) => setFiltros((f) => ({ ...f, activo: v === '__todos__' ? '' : v }))}>
+   359→            <SelectTrigger className="w-[140px]" aria-label="Estado">
+   360→              <SelectValue placeholder="Estado" />
+   361→            </SelectTrigger>
+   362→            <SelectContent>
+   363→              <SelectItem value="true">Activos</SelectItem>
+   364→              <SelectItem value="false">Inactivos</SelectItem>
+   365→              <SelectItem value="__todos__">Todos</SelectItem>
+   366→            </SelectContent>
+   367→          </Select>
+   368→        </CardContent>
+   369→      </Card>
+   370→
+   371→      {/* Tabla */}
+   372→      <Card>
+   373→        <CardContent className="p-0 overflow-x-auto">
+   374→          <Table>
+   375→            <TableHeader>
+   376→              <TableRow>
+   377→                <TableHead>Producto</TableHead>
+   378→                <TableHead>Tipo</TableHead>
+   379→                <TableHead className="text-right">Stock</TableHead>
+   380→                <TableHead className="text-right">Precio</TableHead>
+   381→                {esAdmin && <TableHead className="text-right">Costo</TableHead>}
+   382→                {esAdmin && <TableHead className="text-right">Pago operario</TableHead>}
+   383→                <TableHead>Estado</TableHead>
+   384→                <TableHead className="text-right">Acciones</TableHead>
+   385→              </TableRow>
+   386→            </TableHeader>
+   387→            <TableBody data-tabla="filas">
+   388→              {productosVisibles.map((p, i) => (
+   389→                <TableRow
+   390→                  key={p.id}
+   391→                  className={`${!p.activo ? 'opacity-60' : ''} ${i === filaSel ? 'ring-2 ring-ring/60 ring-inset' : ''}`}
+   392→                  {...propsFila(i)}
+   393→                >
+   394→                  <TableCell>
+   395→                    <div className="font-medium">{p.nombre}</div>
+   396→                    <div className="text-xs text-muted-foreground font-mono">
+   397→                      {p.codigoInterno} · {p.categoria}
+   398→                    </div>
+   399→                  </TableCell>
+   400→                  <TableCell>
+   401→                    <Badge variant={esServicio(p.tipo) ? 'outline' : 'secondary'} className="text-xs">
+   402→                      {esServicio(p.tipo) ? 'Servicio' : 'Producto'}
+   403→                    </Badge>
+   404→                  </TableCell>
+   405→                  <TableCell className="text-right num-tabular">
+   406→                    {esServicio(p.tipo) ? '—' : (
+   407→                      <span className={p.cantidad <= (p.stockMinimo ?? 0) ? 'text-warning font-semibold' : ''}>
+   408→                        {p.cantidad} {p.unidad}
+   409→                      </span>
+   410→                    )}
+   411→                  </TableCell>
+   412→                  <TableCell className="text-right font-semibold num-tabular">
+   413→                    {fmt(p.precio)} {p.monedaPrecio}
+   414→                  </TableCell>
+   415→                  {esAdmin && <TableCell className="text-right text-muted-foreground num-tabular">{fmt(p.costo ?? 0)}</TableCell>}
+   416→                  {esAdmin && (
+   417→                    <TableCell className="text-right text-muted-foreground text-xs">
+   418→                      {p.pagoOperarioTipo === 'PORCENTAJE' ? `${fmt(p.pagoOperarioValor ?? 0)}%` : `${fmt(p.pagoOperarioValor ?? 0)} CUP`}
+   419→                    </TableCell>
+   420→                  )}
+   421→                  <TableCell>
+   422→                    <Badge variant={p.activo ? 'default' : 'destructive'} className="text-xs">
+   423→                      {p.activo ? 'Activo' : 'Inactivo'}
+   424→                    </Badge>
+   425→                  </TableCell>
+   426→                  <TableCell className="text-right">
+   427→                    <div className="flex justify-end gap-1">
+   428→                      {!esServicio(p.tipo) && p.activo && (
+   429→                        <>
+   430→                          <Button
+   431→                            size="sm"
+   432→                            variant="ghost"
+   433→                            title="Entrada de inventario"
+   434→                            onClick={() => {
+   435→                              setProductoAccion(p)
+   436→                              setModalEntrada(true)
+   437→                            }}
+   438→                            aria-label={`Entrada de ${p.nombre}`}
+   439→                          >
+   440→                            <PackagePlus className="h-4 w-4" />
+   441→                          </Button>
+   442→                          <Button
+   443→                            size="sm"
+   444→                            variant="ghost"
+   445→                            title="Baja por defectuoso"
+   446→                            onClick={() => {
+   447→                              setProductoAccion(p)
+   448→                              setModalBaja(true)
+   449→                            }}
+   450→                            aria-label={`Baja de ${p.nombre}`}
+   451→                          >
+   452→                            <Trash2 className="h-4 w-4" />
+   453→                          </Button>
+   454→                          {esAdmin && (
+   455→                            <Button
+   456→                              size="sm"
+   457→                              variant="ghost"
+   458→                              title="Transferir a otro taller"
+   459→                              onClick={() => {
+   460→                                setProductoAccion(p)
+   461→                                setModalTransfer(true)
+   462→                              }}
+   463→                              aria-label={`Transferir ${p.nombre}`}
+   464→                            >
+   465→                              <ArrowLeftRight className="h-4 w-4" />
+   466→                            </Button>
+   467→                          )}
+   468→                        </>
+   469→                      )}
+   470→                      <Button
+   471→                        size="sm"
+   472→                        variant="ghost"
+   473→                        title="Historial de movimientos"
+   474→                        onClick={() => abrirHistorial(p)}
+   475→                        aria-label={`Historial de ${p.nombre}`}
+   476→                      >
+   477→                        <History className="h-4 w-4" />
+   478→                      </Button>
+   479→                      <Button
+   480→                        size="sm"
+   481→                        variant="ghost"
+   482→                        title="Imprimir etiqueta con código de barras (CODE128)"
+   483→                        onClick={() => {
+   484→                          setProductoAccion(p)
+   485→                          setModalEtiqueta(true)
+   486→                        }}
+   487→                        aria-label={`Etiqueta de ${p.nombre}`}
+   488→                      >
+   489→                        <Tag className="h-4 w-4" />
+   490→                      </Button>
+   491→                      <Button size="sm" variant="ghost" title="Editar" onClick={() => abrirEditar(p)} aria-label={`Editar ${p.nombre}`}>
+   492→                        <Pencil className="h-4 w-4" />
+   493→                      </Button>
+   494→                      {esAdmin && p.activo && (
+   495→                        <ConfirmarPeligroso
+   496→                          etiqueta="Desactivar"
+   497→                          etiquetaConfirmar="Confirmar"
+   498→                          onConfirmar={() => toggleActivo(p)}
+   499→                          aviso={`Pulse de nuevo para desactivar «${p.nombre}»`}
+   500→                        />
+   501→                      )}
+   502→                      {esAdmin && !p.activo && (
+   503→                        <Button size="sm" variant="outline" onClick={() => toggleActivo(p)} aria-label={`Activar ${p.nombre}`}>
+   504→                          Activar
+   505→                        </Button>
+   506→                      )}
+   507→                    </div>
+   508→                  </TableCell>
+   509→                </TableRow>
+   510→              ))}
+   511→              {!cargando && productosVisibles.length === 0 && (
+   512→                <TableRow>
+   513→                  <TableCell colSpan={esAdmin ? 8 : 6} className="text-center py-8 text-muted-foreground">
+   514→                    No hay productos con esos filtros.
+   515→                  </TableCell>
+   516→                </TableRow>
+   517→              )}
+   518→            </TableBody>
+   519→          </Table>
+   520→        </CardContent>
+   521→      </Card>
+   522→
+   523→      {/* ============ Modal producto (crear/editar) ============ */}
+   524→      <Dialog open={modalProducto} onOpenChange={setModalProducto}>
+   525→        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+   526→          <DialogHeader>
+   527→            <DialogTitle>{productoEdit.id ? 'Editar producto' : 'Nuevo producto'}</DialogTitle>
+   528→          </DialogHeader>
+   529→          <div className="grid grid-cols-2 gap-3">
+   530→            <div className="col-span-2">
+   531→              <Label htmlFor="prod-nombre">Nombre</Label>
+   532→              <Input id="prod-nombre" value={productoEdit.datos.nombre} onChange={(e) => setProductoEdit((p) => ({ ...p, datos: { ...p.datos, nombre: e.target.value } }))} />
+   533→            </div>
+   534→            <div>
+   535→              <Label htmlFor="prod-cat">Categoría</Label>
+   536→              <Input id="prod-cat" value={productoEdit.datos.categoria} onChange={(e) => setProductoEdit((p) => ({ ...p, datos: { ...p.datos, categoria: e.target.value } }))} />
+   537→            </div>
+   538→            <div>
+   539→              <Label htmlFor="prod-tipo">Tipo</Label>
+   540→              <Select value={productoEdit.datos.tipo} onValueChange={(v) => setProductoEdit((p) => ({ ...p, datos: { ...p.datos, tipo: v } }))}>
+   541→                <SelectTrigger id="prod-tipo">
+   542→                  <SelectValue />
+   543→                </SelectTrigger>
+   544→                <SelectContent>
+   545→                  {TIPOS.map((t) => (
+   546→                    <SelectItem key={t} value={t}>{TIPO_PRODUCTO_LABEL[t]}</SelectItem>
+   547→                  ))}
+   548→                </SelectContent>
+   549→              </Select>
+   550→            </div>
+   551→            <div>
+   552→              <Label htmlFor="prod-precio">Precio</Label>
+   553→              <Input id="prod-precio" inputMode="decimal" value={productoEdit.datos.precio} onChange={(e) => setProductoEdit((p) => ({ ...p, datos: { ...p.datos, precio: e.target.value } }))} />
+   554→            </div>
+   555→            <div>
+   556→              <Label htmlFor="prod-moneda">Moneda del precio</Label>
+   557→              <Select value={productoEdit.datos.monedaPrecio} onValueChange={(v) => setProductoEdit((p) => ({ ...p, datos: { ...p.datos, monedaPrecio: v } }))}>
+   558→                <SelectTrigger id="prod-moneda">
+   559→                  <SelectValue />
+   560→                </SelectTrigger>
+   561→                <SelectContent>
+   562→                  {MONEDAS.map((m) => (
+   563→                    <SelectItem key={m} value={m}>{m}</SelectItem>
+   564→                  ))}
+   565→                </SelectContent>
+   566→              </Select>
+   567→            </div>
+   568→            {!esServicio(productoEdit.datos.tipo) && (
+   569→              <div>
+   570→                <Label htmlFor="prod-unidad">Unidad</Label>
+   571→                <Input id="prod-unidad" value={productoEdit.datos.unidad} onChange={(e) => setProductoEdit((p) => ({ ...p, datos: { ...p.datos, unidad: e.target.value } }))} />
+   572→              </div>
+   573→            )}
+   574→            {esAdmin && !productoEdit.id && !esServicio(productoEdit.datos.tipo) && (
+   575→              <div>
+   576→                <Label htmlFor="prod-cant">Stock inicial (crea movimiento ENTRADA)</Label>
+   577→                <Input id="prod-cant" inputMode="numeric" value={productoEdit.datos.cantidadInicial} onChange={(e) => setProductoEdit((p) => ({ ...p, datos: { ...p.datos, cantidadInicial: e.target.value } }))} />
+   578→              </div>
+   579→            )}
+   580→            {esAdmin && (
+   581→              <>
+   582→                <div className="col-span-2 text-sm font-medium pt-2 border-t mt-1">
+   583→                  Campos sensibles (solo ADMIN)
+   584→                </div>
+   585→                <div>
+   586→                  <Label htmlFor="prod-costo">Costo (CUP)</Label>
+   587→                  <Input id="prod-costo" inputMode="decimal" value={productoEdit.datos.costo} onChange={(e) => setProductoEdit((p) => ({ ...p, datos: { ...p.datos, costo: e.target.value } }))} />
+   588→                </div>
+   589→                {!esServicio(productoEdit.datos.tipo) && (
+   590→                  <div>
+   591→                    <Label htmlFor="prod-min">Stock mínimo</Label>
+   592→                    <Input id="prod-min" inputMode="numeric" value={productoEdit.datos.stockMinimo} onChange={(e) => setProductoEdit((p) => ({ ...p, datos: { ...p.datos, stockMinimo: e.target.value } }))} />
+   593→                  </div>
+   594→                )}
+   595→                <div>
+   596→                  <Label htmlFor="prod-pago-tipo">Pago al operario</Label>
+   597→                  <Select value={productoEdit.datos.pagoOperarioTipo} onValueChange={(v) => setProductoEdit((p) => ({ ...p, datos: { ...p.datos, pagoOperarioTipo: v } }))}>
+   598→                    <SelectTrigger id="prod-pago-tipo">
+   599→                      <SelectValue />
+   600→                    </SelectTrigger>
+   601→                    <SelectContent>
+   602→                      <SelectItem value="FIJO">FIJO (CUP × unidad)</SelectItem>
+   603→                      <SelectItem value="PORCENTAJE">PORCENTAJE (% del subtotal)</SelectItem>
+   604→                    </SelectContent>
+   605→                  </Select>
+   606→                </div>
+   607→                <div>
+   608→                  <Label htmlFor="prod-pago-valor">
+   609→                    {productoEdit.datos.pagoOperarioTipo === 'PORCENTAJE' ? 'Valor (%)' : 'Valor (CUP)'}
+   610→                  </Label>
+   611→                  <Input id="prod-pago-valor" inputMode="decimal" value={productoEdit.datos.pagoOperarioValor} onChange={(e) => setProductoEdit((p) => ({ ...p, datos: { ...p.datos, pagoOperarioValor: e.target.value } }))} />
+   612→                </div>
+   613→                <div>
+   614→                  <Label htmlFor="prod-gar">Garantía (días)</Label>
+   615→                  <Input id="prod-gar" inputMode="numeric" value={productoEdit.datos.garantiaDias} onChange={(e) => setProductoEdit((p) => ({ ...p, datos: { ...p.datos, garantiaDias: e.target.value } }))} />
+   616→                </div>
+   617→              </>
+   618→            )}
+   619→          </div>
+   620→          <DialogFooter>
+   621→            <Button variant="outline" onClick={() => setModalProducto(false)}>Cancelar</Button>
+   622→            <Button onClick={guardarProducto} className="bg-brand-red hover:bg-brand-red-hover">
+   623→              Guardar <Kbd className="ml-2 border-white/40 bg-white/15 text-white">Ctrl</Kbd>+<Kbd className="border-white/40 bg-white/15 text-white">S</Kbd>
+   624→            </Button>
+   625→          </DialogFooter>
+   626→        </DialogContent>
+   627→      </Dialog>
+   628→
+   629→      {/* ============ Modal etiqueta (CODE128) ============ */}
+   630→      <Dialog open={modalEtiqueta} onOpenChange={setModalEtiqueta}>
+   631→        <DialogContent className="max-w-sm">
+   632→          <DialogHeader>
+   633→            <DialogTitle>Etiqueta · {productoAccion?.nombre}</DialogTitle>
+   634→          </DialogHeader>
+   635→          <div className="solo-impresion bg-white text-black rounded-lg border p-4 mx-auto w-fit">
+   636→            <div className="text-sm font-semibold text-center leading-tight max-w-[64mm]">{productoAccion?.nombre}</div>
+   637→            <div
+   638→              className="my-2 flex justify-center"
+   639→              aria-hidden
+   640→              dangerouslySetInnerHTML={{ __html: code128Svg(productoAccion?.codigoBarras || productoAccion?.codigoInterno || '') }}
+   641→            />
+   642→            <div className="text-center text-xs font-mono">{productoAccion?.codigoBarras}</div>
+   643→            <div className="text-center text-sm font-bold mt-1 num-tabular">
+   644→              {fmt(productoAccion?.precio ?? 0)} {productoAccion?.monedaPrecio}
+   645→            </div>
+   646→          </div>
+   647→          <DialogFooter>
+   648→            <Button variant="outline" onClick={() => setModalEtiqueta(false)}>Cerrar</Button>
+   649→            <Button onClick={() => window.print()} className="bg-brand-red hover:bg-brand-red-hover">
+   650→              <Printer className="h-4 w-4 mr-2" /> Imprimir
+   651→            </Button>
+   652→          </DialogFooter>
+   653→        </DialogContent>
+   654→      </Dialog>
+   655→
+   656→      {/* ============ Modal entrada ============ */}
+   657→      <Dialog open={modalEntrada} onOpenChange={setModalEntrada}>
+   658→        <DialogContent className="max-w-sm">
+   659→          <DialogHeader>
+   660→            <DialogTitle>Entrada de inventario</DialogTitle>
+   661→          </DialogHeader>
+   662→          <div className="space-y-3">
+   663→            <p className="text-sm text-muted-foreground">{productoAccion?.nombre}</p>
+   664→            <div>
+   665→              <Label htmlFor="ent-cant">Cantidad</Label>
+   666→              <Input id="ent-cant" inputMode="numeric" value={formEntrada.cantidad} onChange={(e) => setFormEntrada((f) => ({ ...f, cantidad: e.target.value }))} />
+   667→            </div>
+   668→            {esAdmin && (
+   669→              <div>
+   670→                <Label htmlFor="ent-costo">Costo unitario (opcional)</Label>
+   671→                <Input id="ent-costo" inputMode="decimal" value={formEntrada.costoUnitario} onChange={(e) => setFormEntrada((f) => ({ ...f, costoUnitario: e.target.value }))} />
+   672→              </div>
+   673→            )}
+   674→            <div>
+   675→              <Label htmlFor="ent-nota">Nota (opcional)</Label>
+   676→              <Input id="ent-nota" value={formEntrada.nota} onChange={(e) => setFormEntrada((f) => ({ ...f, nota: e.target.value }))} />
+   677→            </div>
+   678→          </div>
+   679→          <DialogFooter>
+   680→            <Button variant="outline" onClick={() => setModalEntrada(false)}>Cancelar</Button>
+   681→            <Button onClick={registrarEntrada}>Registrar entrada</Button>
+   682→          </DialogFooter>
+   683→        </DialogContent>
+   684→      </Dialog>
+   685→
+   686→      {/* ============ Modal baja ============ */}
+   687→      <Dialog open={modalBaja} onOpenChange={setModalBaja}>
+   688→        <DialogContent className="max-w-sm">
+   689→          <DialogHeader>
+   690→            <DialogTitle>Baja por defectuoso</DialogTitle>
+   691→          </DialogHeader>
+   692→          <div className="space-y-3">
+   693→            <p className="text-sm text-muted-foreground">
+   694→              {productoAccion?.nombre} · stock {productoAccion?.cantidad}
+   695→            </p>
+   696→            <div>
+   697→              <Label htmlFor="baja-cant">Cantidad</Label>
+   698→              <Input id="baja-cant" inputMode="numeric" value={formBaja.cantidad} onChange={(e) => setFormBaja((f) => ({ ...f, cantidad: e.target.value }))} />
+   699→            </div>
+   700→            <div>
+   701→              <Label htmlFor="baja-motivo">Motivo (obligatorio)</Label>
+   702→              <Input id="baja-motivo" value={formBaja.motivo} onChange={(e) => setFormBaja((f) => ({ ...f, motivo: e.target.value }))} />
+   703→            </div>
+   704→            <p className="text-xs text-muted-foreground">Se registra el costo unitario y el motivo. El stock baja de inmediato.</p>
+   705→          </div>
+   706→          <DialogFooter>
+   707→            <Button variant="outline" onClick={() => setModalBaja(false)}>Cancelar</Button>
+   708→            <Button variant="destructive" onClick={registrarBaja}>
+   709→              Registrar baja
+   710→            </Button>
+   711→          </DialogFooter>
+   712→        </DialogContent>
+   713→      </Dialog>
+   714→
+   715→      {/* ============ Modal transferencia ============ */}
+   716→      <Dialog open={modalTransfer} onOpenChange={setModalTransfer}>
+   717→        <DialogContent className="max-w-sm">
+   718→          <DialogHeader>
+   719→            <DialogTitle>Transferir entre talleres (ADMIN)</DialogTitle>
+   720→          </DialogHeader>
+   721→          <div className="space-y-3">
+   722→            <p className="text-sm text-muted-foreground">
+   723→              {productoAccion?.nombre} · stock {productoAccion?.cantidad}
+   724→            </p>
+   725→            <div>
+   726→              <Label htmlFor="tr-destino">Taller destino</Label>
+   727→              <Select value={formTransfer.tallerDestinoId} onValueChange={(v) => setFormTransfer((f) => ({ ...f, tallerDestinoId: v }))}>
+   728→                <SelectTrigger id="tr-destino">
+   729→                  <SelectValue placeholder="Seleccione taller" />
+   730→                </SelectTrigger>
+   731→                <SelectContent>
+   732→                  {listaTalleres
+   733→                    .filter((t) => t.id !== productoAccion?.id && t.activo && t.id !== tallerId)
+   734→                    .map((t) => (
+   735→                      <SelectItem key={t.id} value={t.id}>{t.nombre}</SelectItem>
+   736→                    ))}
+   737→                </SelectContent>
+   738→              </Select>
+   739→            </div>
+   740→            <div>
+   741→              <Label htmlFor="tr-cant">Cantidad</Label>
+   742→              <Input id="tr-cant" inputMode="numeric" value={formTransfer.cantidad} onChange={(e) => setFormTransfer((f) => ({ ...f, cantidad: e.target.value }))} />
+   743→            </div>
+   744→            <div>
+   745→              <Label htmlFor="tr-nota">Nota (opcional)</Label>
+   746→              <Input id="tr-nota" value={formTransfer.nota} onChange={(e) => setFormTransfer((f) => ({ ...f, nota: e.target.value }))} />
+   747→            </div>
+   748→            <p className="text-xs text-muted-foreground">
+   749→              Genera TRANSFERENCIA_SALIDA en origen y TRANSFERENCIA_ENTRADA en destino con el mismo costo.
+   750→            </p>
+   751→          </div>
+   752→          <DialogFooter>
+   753→            <Button variant="outline" onClick={() => setModalTransfer(false)}>Cancelar</Button>
+   754→            <Button onClick={registrarTransferencia} disabled={!formTransfer.tallerDestinoId || !formTransfer.cantidad}>
+   755→              Transferir
+   756→            </Button>
+   757→          </DialogFooter>
+   758→        </DialogContent>
+   759→      </Dialog>
+   760→
+   761→      {/* ============ Modal historial ============ */}
+   762→      <Dialog open={modalHistorial} onOpenChange={setModalHistorial}>
+   763→        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+   764→          <DialogHeader>
+   765→            <DialogTitle>Movimientos · {productoAccion?.nombre}</DialogTitle>
+   766→          </DialogHeader>
+   767→          <div className="overflow-x-auto">
+   768→            <Table>
+   769→              <TableHeader>
+   770→                <TableRow>
+   771→                  <TableHead>Fecha</TableHead>
+   772→                  <TableHead>Tipo</TableHead>
+   773→                  <TableHead className="text-right">Cantidad</TableHead>
+   774→                  <TableHead className="text-right">Costo</TableHead>
+   775→                  <TableHead>Nota</TableHead>
+   776→                  <TableHead>Usuario</TableHead>
+   777→                </TableRow>
+   778→              </TableHeader>
+   779→              <TableBody>
+   780→                {movimientos.map((m) => (
+   781→                  <TableRow key={m.id}>
+   782→                    <TableCell className="text-xs whitespace-nowrap">{fmtFechaHora(m.fecha)}</TableCell>
+   783→                    <TableCell>
+   784→                      <Badge
+   785→                        variant={m.tipo === 'ENTRADA' || m.tipo === 'TRANSFERENCIA_ENTRADA' ? 'default' : m.tipo === 'VENTA' ? 'secondary' : 'destructive'}
+   786→                        className="text-xs"
+   787→                      >
+   788→                        {MOVIMIENTO_LABEL[m.tipo] ?? m.tipo}
+   789→                      </Badge>
+   790→                    </TableCell>
+   791→                    <TableCell className="text-right">
+   792→                      {m.tipo === 'AJUSTE' ? m.cantidad : m.tipo === 'ENTRADA' || m.tipo === 'TRANSFERENCIA_ENTRADA' ? `+${m.cantidad}` : `−${m.cantidad}`}
+   793→                    </TableCell>
+   794→                    <TableCell className="text-right text-xs">{fmt(m.costoUnitario)}</TableCell>
+   795→                    <TableCell className="text-xs max-w-[220px] truncate" title={m.nota ?? ''}>{m.nota ?? '—'}</TableCell>
+   796→                    <TableCell className="text-xs">{m.usuario?.nombre ?? '—'}</TableCell>
+   797→                  </TableRow>
+   798→                ))}
+   799→                {movimientos.length === 0 && (
+   800→                  <TableRow>
+   801→                    <TableCell colSpan={6} className="text-center py-6 text-muted-foreground">Sin movimientos.</TableCell>
+   802→                  </TableRow>
+   803→                )}
+   804→              </TableBody>
+   805→            </Table>
+   806→          </div>
+   807→        </DialogContent>
+   808→      </Dialog>
+   809→    </div>
+   810→  )
+   811→}
+   812→

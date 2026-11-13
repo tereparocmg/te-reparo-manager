@@ -1,0 +1,1108 @@
+     1→'use client'
+     2→import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+     3→import { useHotkeys } from 'react-hotkeys-hook'
+     4→import { Button } from '@/components/ui/button'
+     5→import { Input } from '@/components/ui/input'
+     6→import { Label } from '@/components/ui/label'
+     7→import { Badge } from '@/components/ui/badge'
+     8→import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+     9→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+    10→import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+    11→import { toast } from 'sonner'
+    12→import {
+    13→  Search, Plus, Minus, Trash2, UserPlus, User, CreditCard, Printer, X, Package, Wrench,
+    14→  Loader2, Volume2, VolumeX, ScanLine,
+    15→} from 'lucide-react'
+    16→import { api } from '@/lib/api-client'
+    17→import { useApp } from '@/lib/store'
+    18→import { fmt, fmtCUP, aCUP, esServicio, METODO_PAGO_LABEL } from '@/lib/formato'
+    19→import { sonidoExito, sonidoError, sonidoVenta, sonidosActivos, alternarSonidos } from '@/lib/sonidos'
+    20→import { useDebounce } from '@/hooks/use-debounce'
+    21→import { Kbd } from '../kbd'
+    22→import { TicketVenta } from '../ticket'
+    23→
+    24→interface Producto {
+    25→  id: string
+    26→  nombre: string
+    27→  categoria: string
+    28→  tipo: string
+    29→  cantidad: number
+    30→  precio: number
+    31→  monedaPrecio: string
+    32→  codigoInterno: string
+    33→  codigoBarras: string
+    34→  activo: boolean
+    35→}
+    36→
+    37→interface Operario {
+    38→  id: string
+    39→  nombre: string
+    40→  rama: string
+    41→  activo: boolean
+    42→  talleres: Array<{ tallerId: string }>
+    43→}
+    44→
+    45→interface Cliente {
+    46→  id: string
+    47→  nombre: string
+    48→  telefono: string | null
+    49→  ci: string | null
+    50→}
+    51→
+    52→interface Pago {
+    53→  metodo: string
+    54→  moneda: string
+    55→  monto: string
+    56→  referencia: string
+    57→}
+    58→
+    59→interface VentaDetalle {
+    60→  venta: {
+    61→    codigo: string
+    62→    fecha: string
+    63→    totalCUP: number
+    64→    taller: { nombre: string; direccion: string; telefono: string }
+    65→    cliente: { nombre: string } | null
+    66→    vendedor: { nombre: string }
+    67→    items: Array<{
+    68→      cantidad: number
+    69→      precioUnitario: number
+    70→      monedaPrecio: string
+    71→      subtotalCUP: number
+    72→      producto: { nombre: string }
+    73→      operario: { nombre: string } | null
+    74→    }>
+    75→    pagos: Array<{ metodo: string; moneda: string; monto: number; montoCUP: number; referencia: string | null }>
+    76→  }
+    77→  ajustes: Record<string, string>
+    78→}
+    79→
+    80→const MONEDAS = ['CUP', 'USD', 'EUR']
+    81→const METODOS = ['EFECTIVO', 'TRANSFERENCIA', 'ZELLE']
+    82→
+    83→/** ¿El foco está en un campo de texto? (los atajos de líneas no deben interferir) */
+    84→function focoEnCampo(): boolean {
+    85→  const el = document.activeElement
+    86→  if (!el) return false
+    87→  const tag = el.tagName
+    88→  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (el as HTMLElement).getAttribute('role') === 'option'
+    89→}
+    90→
+    91→export function Pos() {
+    92→  const usuario = useApp((s) => s.usuario)
+    93→  const tasas = useApp((s) => s.tasas)
+    94→  const setTasas = useApp((s) => s.setTasas)
+    95→  const ajustes = useApp((s) => s.ajustes)
+    96→  const tallerActivoId = useApp((s) => s.tallerActivoId)
+    97→  const talleres = useApp((s) => s.talleres)
+    98→
+    99→  const carritos = useApp((s) => s.carritos)
+   100→  const carritoActivo = useApp((s) => s.carritoActivo)
+   101→  const nuevoCarrito = useApp((s) => s.nuevoCarrito)
+   102→  const cerrarCarrito = useApp((s) => s.cerrarCarrito)
+   103→  const setCarritoActivo = useApp((s) => s.setCarritoActivo)
+   104→  const agregarItem = useApp((s) => s.agregarItem)
+   105→  const quitarItem = useApp((s) => s.quitarItem)
+   106→  const cambiarCantidad = useApp((s) => s.cambiarCantidad)
+   107→  const cambiarPrecio = useApp((s) => s.cambiarPrecio)
+   108→  const asignarOperario = useApp((s) => s.asignarOperario)
+   109→  const setCliente = useApp((s) => s.setCliente)
+   110→
+   111→  const tallerId = usuario?.rol === 'VENDEDOR' ? usuario.tallerId : tallerActivoId ?? talleres[0]?.id
+   112→  const taller = talleres.find((t) => t.id === tallerId)
+   113→
+   114→  const [productos, setProductos] = useState<Producto[]>([])
+   115→  const [operarios, setOperarios] = useState<Operario[]>([])
+   116→  // Buscador unificado: texto manual Y lector de código de barras (HID = teclado + Enter)
+   117→  const [busqueda, setBusqueda] = useState('')
+   118→  const busquedaEfectiva = useDebounce(busqueda, 300) // filtro con debounce para búsqueda manual
+   119→  const [pagos, setPagos] = useState<Record<string, Pago[]>>({})
+   120→  const [confirmando, setConfirmando] = useState(false)
+   121→  const [ticketData, setTicketData] = useState<VentaDetalle | null>(null)
+   122→  const [modalCliente, setModalCliente] = useState(false)
+   123→  const [modalCobro, setModalCobro] = useState(false)
+   124→  const [lineaSel, setLineaSel] = useState(-1)
+   125→  const [sonido, setSonido] = useState(true)
+   126→  const [busqCliente, setBusqCliente] = useState('')
+   127→  const [resultadosCliente, setResultadosCliente] = useState<Cliente[]>([])
+   128→  const [nuevoCliente, setNuevoCliente] = useState({ nombre: '', telefono: '', ci: '' })
+   129→  const [tasasEdit, setTasasEdit] = useState({ USD: String(tasas.USD), EUR: String(tasas.EUR) })
+   130→  const busquedaRef = useRef<HTMLInputElement>(null)
+   131→  const contenedorLineas = useRef<HTMLDivElement>(null)
+   132→  const preciosRefs = useRef<Record<string, HTMLInputElement | null>>({})
+   133→
+   134→  const carritosTaller = useMemo(() => carritos.filter((c) => c.tallerId === tallerId), [carritos, tallerId])
+   135→  const carrito = useMemo(
+   136→    () => carritosTaller.find((c) => c.id === carritoActivo) ?? carritosTaller[carritosTaller.length - 1] ?? null,
+   137→    [carritosTaller, carritoActivo]
+   138→  )
+   139→  const pagosActivos = carrito ? pagos[carrito.id] ?? [] : []
+   140→  const items = carrito?.items ?? []
+   141→
+   142→  const cargarProductos = useCallback(async () => {
+   143→    if (!tallerId) return
+   144→    try {
+   145→      const res = await api.get<{ productos: Producto[] }>(`/api/productos?tallerId=${tallerId}&activo=true`)
+   146→      setProductos(res.productos)
+   147→    } catch (e) {
+   148→      toast.error(e instanceof Error ? e.message : 'Error al cargar productos')
+   149→    }
+   150→  }, [tallerId])
+   151→
+   152→  useEffect(() => {
+   153→    cargarProductos()
+   154→    if (tallerId) {
+   155→      api
+   156→        .get<{ operarios: Operario[] }>(`/api/operarios?tallerId=${tallerId}`)
+   157→        .then((r) => setOperarios(r.operarios.filter((o) => o.activo)))
+   158→        .catch(() => setOperarios([]))
+   159→    }
+   160→    setTasasEdit({ USD: String(tasas.USD), EUR: String(tasas.EUR) })
+   161→    setSonido(sonidosActivos())
+   162→    // El buscador queda listo para el lector de barras al entrar al POS
+   163→    busquedaRef.current?.focus()
+   164→  }, [tallerId])
+   165→
+   166→  // Carrito inicial
+   167→  useEffect(() => {
+   168→    if (tallerId && carritosTaller.length === 0) nuevoCarrito(tallerId)
+   169→  }, [tallerId, carritosTaller.length])
+   170→
+   171→  // Al cambiar de carrito se pierde la selección de línea
+   172→  useEffect(() => {
+   173→    setLineaSel(-1)
+   174→  }, [carrito?.id])
+   175→
+   176→  const filtrarPor = useCallback(
+   177→    (q: string): Producto[] => {
+   178→      const t = q.trim().toLowerCase()
+   179→      if (!t) return productos
+   180→      return productos.filter(
+   181→        (p) =>
+   182→          p.nombre.toLowerCase().includes(t) ||
+   183→          p.codigoInterno.toLowerCase().includes(t) ||
+   184→          p.codigoBarras.toLowerCase().includes(t) ||
+   185→          p.categoria.toLowerCase().includes(t)
+   186→      )
+   187→    },
+   188→    [productos]
+   189→  )
+   190→
+   191→  const productosFiltrados = useMemo(() => filtrarPor(busquedaEfectiva), [filtrarPor, busquedaEfectiva])
+   192→
+   193→  const totales = useMemo(() => {
+   194→    if (!carrito) return { cup: 0, usd: 0 }
+   195→    const cup = carrito.items.reduce((acc, it) => acc + aCUP(it.precio, it.moneda, tasas) * it.cantidad, 0)
+   196→    return { cup: Math.round(cup * 100) / 100, usd: tasas.USD > 0 ? Math.round((cup / tasas.USD) * 100) / 100 : 0 }
+   197→  }, [carrito, tasas])
+   198→
+   199→  const cubierto = useMemo(
+   200→    () => pagosActivos.reduce((acc, p) => acc + aCUP(parseFloat(p.monto || '0'), p.moneda, tasas), 0),
+   201→    [pagosActivos, tasas]
+   202→  )
+   203→  const faltante = Math.round((totales.cup - cubierto) * 100) / 100
+   204→
+   205→  const itemsInvalidos = useMemo(() => {
+   206→    if (!carrito) return []
+   207→    return carrito.items.filter(
+   208→      (it) => (esServicio(it.tipo) && !it.operarioId) || (!esServicio(it.tipo) && it.cantidad > it.stock)
+   209→    )
+   210→  }, [carrito])
+   211→
+   212→  // =============== ACCIONES ===============
+   213→
+   214→  function agregarProducto(p: Producto) {
+   215→    if (!tallerId) return
+   216→    const stockDisponible = productos.find((x) => x.id === p.id)?.cantidad ?? 0
+   217→    const enCarrito = carrito?.items.find((i) => i.productoId === p.id)?.cantidad ?? 0
+   218→    if (!esServicio(p.tipo) && enCarrito >= stockDisponible) {
+   219→      toast.error(`Stock insuficiente de ${p.nombre} (disponible ${stockDisponible})`)
+   220→      sonidoError()
+   221→      return
+   222→    }
+   223→    agregarItem(tallerId, {
+   224→      productoId: p.id,
+   225→      nombre: p.nombre,
+   226→      tipo: p.tipo,
+   227→      cantidad: 1,
+   228→      precio: p.precio,
+   229→      precioOriginal: p.precio,
+   230→      moneda: p.monedaPrecio,
+   231→      operarioId: null,
+   232→      stock: stockDisponible,
+   233→    })
+   234→    sonidoExito()
+   235→  }
+   236→
+   237→  /** Enter del buscador: código exacto del lector o primer resultado manual. */
+   238→  function alEnterBuscador() {
+   239→    const q = busqueda.trim()
+   240→    if (!q) return
+   241→    // 1) Coincidencia exacta de código de barras o código interno (lector HID)
+   242→    const exacto = productos.find(
+   243→      (x) => x.codigoBarras.toLowerCase() === q.toLowerCase() || x.codigoInterno.toLowerCase() === q.toLowerCase()
+   244→    )
+   245→    if (exacto) {
+   246→      agregarProducto(exacto)
+   247→      setBusqueda('')
+   248→      return
+   249→    }
+   250→    // 2) Primer resultado de la búsqueda manual
+   251→    const resultados = filtrarPor(q)
+   252→    if (resultados.length > 0) {
+   253→      agregarProducto(resultados[0])
+   254→      setBusqueda('')
+   255→      return
+   256→    }
+   257→    // 3) Sin resultados: error rápido, mantener el foco para reintentar
+   258→    toast.error(`Código no encontrado: ${q}`)
+   259→    sonidoError()
+   260→    busquedaRef.current?.select()
+   261→  }
+   262→
+   263→  async function guardarTasas() {
+   264→    const usd = parseFloat(tasasEdit.USD)
+   265→    const eur = parseFloat(tasasEdit.EUR)
+   266→    if (!isFinite(usd) || usd <= 0 || !isFinite(eur) || eur <= 0) {
+   267→      toast.error('Tasas inválidas')
+   268→      return
+   269→    }
+   270→    try {
+   271→      if (usd !== tasas.USD) await api.post('/api/tasas', { moneda: 'USD', valorCUP: usd })
+   272→      if (eur !== tasas.EUR) await api.post('/api/tasas', { moneda: 'EUR', valorCUP: eur })
+   273→      setTasas({ USD: usd, EUR: eur })
+   274→      toast.success('Tasas actualizadas')
+   275→    } catch (e) {
+   276→      toast.error(e instanceof Error ? e.message : 'Error al actualizar tasas')
+   277→    }
+   278→  }
+   279→
+   280→  function agregarPago() {
+   281→    if (!carrito) return
+   282→    const falt = Math.max(0, faltante)
+   283→    const defecto: Pago =
+   284→      falt > 0
+   285→        ? { metodo: 'EFECTIVO', moneda: 'CUP', monto: String(falt), referencia: '' }
+   286→        : { metodo: 'EFECTIVO', moneda: 'CUP', monto: '', referencia: '' }
+   287→    setPagos((p) => ({ ...p, [carrito.id]: [...(p[carrito.id] ?? []), defecto] }))
+   288→  }
+   289→
+   290→  function actualizarPago(i: number, cambios: Partial<Pago>) {
+   291→    if (!carrito) return
+   292→    setPagos((p) => ({
+   293→      ...p,
+   294→      [carrito.id]: (p[carrito.id] ?? []).map((pg, idx) => (idx === i ? { ...pg, ...cambios } : pg)),
+   295→    }))
+   296→  }
+   297→
+   298→  function quitarPago(i: number) {
+   299→    if (!carrito) return
+   300→    setPagos((p) => ({ ...p, [carrito.id]: (p[carrito.id] ?? []).filter((_, idx) => idx !== i) }))
+   301→  }
+   302→
+   303→  async function buscarClientes(q: string) {
+   304→    const res = await api.get<{ clientes: Cliente[] }>(`/api/clientes?q=${encodeURIComponent(q)}`)
+   305→    setResultadosCliente(res.clientes)
+   306→  }
+   307→
+   308→  async function crearCliente() {
+   309→    if (nuevoCliente.nombre.trim().length < 2) {
+   310→      toast.error('Nombre del cliente muy corto')
+   311→      return
+   312→    }
+   313→    try {
+   314→      const res = await api.post<{ cliente: Cliente }>('/api/clientes', {
+   315→        nombre: nuevoCliente.nombre.trim(),
+   316→        telefono: nuevoCliente.telefono || null,
+   317→        ci: nuevoCliente.ci || null,
+   318→      })
+   319→      if (carrito) setCliente(carrito.id, { id: res.cliente.id, nombre: res.cliente.nombre })
+   320→      setModalCliente(false)
+   321→      setNuevoCliente({ nombre: '', telefono: '', ci: '' })
+   322→      toast.success('Cliente creado y asignado')
+   323→    } catch (e) {
+   324→      toast.error(e instanceof Error ? e.message : 'Error al crear cliente')
+   325→    }
+   326→  }
+   327→
+   328→  /** Validaciones previas a confirmar la venta (devuelve mensaje de error o null). */
+   329→  function validarVenta(): string | null {
+   330→    if (!carrito || !tallerId) return 'No hay carrito o taller'
+   331→    if (carrito.items.length === 0) return 'El carrito está vacío'
+   332→    if (itemsInvalidos.length > 0) return 'Hay líneas inválidas: servicios sin operario o cantidad mayor que el stock'
+   333→    const pagosValidos = pagosActivos.filter((p) => parseFloat(p.monto) > 0)
+   334→    if (pagosValidos.length === 0) return 'Registre al menos un pago'
+   335→    for (const p of pagosValidos) {
+   336→      if (p.metodo === 'ZELLE' && (p.moneda !== 'USD' || !p.referencia.trim())) {
+   337→        return 'Zelle solo en USD y con referencia obligatoria'
+   338→      }
+   339→    }
+   340→    if (cubierto + 0.001 < totales.cup) return `Faltan ${fmtCUP(faltante)} por cubrir`
+   341→    return null
+   342→  }
+   343→
+   344→  function abrirCobro() {
+   345→    if (!carrito || carrito.items.length === 0) {
+   346→      toast.error('El carrito está vacío')
+   347→      return
+   348→    }
+   349→    // Si no hay pagos, precarga uno por el monto exacto
+   350→    if ((pagos[carrito.id] ?? []).length === 0) agregarPago()
+   351→    setModalCobro(true)
+   352→  }
+   353→
+   354→  async function confirmarVenta(e?: React.FormEvent) {
+   355→    e?.preventDefault()
+   356→    const error = validarVenta()
+   357→    if (error) {
+   358→      toast.error(error)
+   359→      sonidoError()
+   360→      return
+   361→    }
+   362→    if (!carrito || !tallerId) return
+   363→    setConfirmando(true)
+   364→    try {
+   365→      const pagosValidos = pagosActivos.filter((p) => parseFloat(p.monto) > 0)
+   366→      const res = await api.post<{ venta: { id: string; codigo: string } }>('/api/ventas', {
+   367→        tallerId,
+   368→        clienteId: carrito.clienteId,
+   369→        items: carrito.items.map((it) => ({
+   370→          productoId: it.productoId,
+   371→          cantidad: it.cantidad,
+   372→          precioUnitario: it.precio !== it.precioOriginal ? it.precio : undefined,
+   373→          operarioId: it.operarioId,
+   374→        })),
+   375→        pagos: pagosValidos.map((p) => ({
+   376→          metodo: p.metodo,
+   377→          moneda: p.moneda,
+   378→          monto: parseFloat(p.monto),
+   379→          referencia: p.metodo === 'ZELLE' ? p.referencia.trim() : p.referencia || undefined,
+   380→        })),
+   381→      })
+   382→      const detalle = await api.get<VentaDetalle>(`/api/ventas?id=${res.venta.id}`)
+   383→      setTicketData(detalle)
+   384→      setModalCobro(false)
+   385→      toast.success(`Venta ${res.venta.codigo} registrada`)
+   386→      sonidoVenta()
+   387→      cerrarCarrito(carrito.id)
+   388→      setPagos((p) => {
+   389→        const copia = { ...p }
+   390→        delete copia[carrito.id]
+   391→        return copia
+   392→      })
+   393→      nuevoCarrito(tallerId)
+   394→      setLineaSel(-1)
+   395→      await cargarProductos()
+   396→      // El buscador vuelve a quedar listo para el siguiente escaneo
+   397→      setTimeout(() => busquedaRef.current?.focus(), 50)
+   398→    } catch (err) {
+   399→      toast.error(err instanceof Error ? err.message : 'Error al registrar la venta')
+   400→      sonidoError()
+   401→    } finally {
+   402→      setConfirmando(false)
+   403→    }
+   404→  }
+   405→
+   406→  // =============== SELECCIÓN DE LÍNEAS DEL CARRITO ===============
+   407→
+   408→  const seleccionarLinea = useCallback(
+   409→    (i: number) => {
+   410→      if (items.length === 0) return
+   411→      const destino = Math.max(0, Math.min(i, items.length - 1))
+   412→      setLineaSel(destino)
+   413→      const el = contenedorLineas.current?.querySelector<HTMLElement>(`[data-indice="${destino}"]`)
+   414→      el?.focus()
+   415→      el?.scrollIntoView({ block: 'nearest' })
+   416→    },
+   417→    [items.length]
+   418→  )
+   419→
+   420→  const cambiarCantidadSel = useCallback(
+   421→    (delta: number) => {
+   422→      if (!carrito || lineaSel < 0) return
+   423→      const it = carrito.items[lineaSel]
+   424→      if (!it) return
+   425→      if (esServicio(it.tipo)) {
+   426→        toast.info('Los servicios se cobran ×1')
+   427→        return
+   428→      }
+   429→      const nueva = it.cantidad + delta
+   430→      if (nueva < 1) return
+   431→      if (nueva > it.stock) {
+   432→        toast.error(`Stock máximo: ${it.stock}`)
+   433→        return
+   434→      }
+   435→      cambiarCantidad(carrito.id, it.productoId, nueva)
+   436→    },
+   437→    [carrito, lineaSel, cambiarCantidad]
+   438→  )
+   439→
+   440→  // =============== ATAJOS DE TECLADO DEL POS (§3.2) ===============
+   441→
+   442→  useHotkeys('f2', (e) => {
+   443→    e.preventDefault()
+   444→    busquedaRef.current?.focus()
+   445→    busquedaRef.current?.select()
+   446→  }, { enableOnFormTags: true })
+   447→
+   448→  useHotkeys('f4', (e) => {
+   449→    e.preventDefault()
+   450→    if (tallerId) nuevoCarrito(tallerId)
+   451→  }, { enableOnFormTags: true })
+   452→
+   453→  useHotkeys(
+   454→    ['ctrl+tab', 'ctrl+shift+tab'],
+   455→    (e) => {
+   456→      e.preventDefault()
+   457→      if (carritosTaller.length < 2) return
+   458→      const actual = carritosTaller.findIndex((c) => c.id === carrito?.id)
+   459→      const dir = e.key === 'Tab' && e.shiftKey ? -1 : 1
+   460→      const siguiente = (actual + dir + carritosTaller.length) % carritosTaller.length
+   461→      setCarritoActivo(carritosTaller[siguiente].id)
+   462→    },
+   463→    { enableOnFormTags: true }
+   464→  )
+   465→
+   466→  useHotkeys('f8', (e) => {
+   467→    e.preventDefault()
+   468→    setModalCliente(true)
+   469→  }, { enableOnFormTags: true })
+   470→
+   471→  useHotkeys('f9', (e) => {
+   472→    e.preventDefault()
+   473→    if (!modalCobro) abrirCobro()
+   474→  }, { enableOnFormTags: true })
+   475→
+   476→  useHotkeys(
+   477→    ['up', 'down'],
+   478→    (e) => {
+   479→      e.preventDefault()
+   480→      seleccionarLinea(lineaSel + (e.key === 'ArrowDown' ? 1 : -1))
+   481→    },
+   482→    { enabled: () => !focoEnCampo() && !modalCliente && !modalCobro && !ticketData }
+   483→  )
+   484→
+   485→  useHotkeys(
+   486→    ['+', '=', '-'],
+   487→    (e) => {
+   488→      e.preventDefault()
+   489→      cambiarCantidadSel(e.key === '-' ? -1 : 1)
+   490→    },
+   491→    { enabled: () => !focoEnCampo() && !modalCliente && !modalCobro && !ticketData }
+   492→  )
+   493→
+   494→  useHotkeys(
+   495→    ['ctrl+delete', 'ctrl+del'],
+   496→    (e) => {
+   497→      e.preventDefault()
+   498→      if (!carrito || lineaSel < 0) return
+   499→      const it = carrito.items[lineaSel]
+   500→      if (!it) return
+   501→      quitarItem(carrito.id, it.productoId)
+   502→      setLineaSel((i) => Math.min(i, carrito.items.length - 2))
+   503→    },
+   504→    { enabled: () => !focoEnCampo() && !modalCliente && !modalCobro && !ticketData }
+   505→  )
+   506→
+   507→  useHotkeys(
+   508→    'ctrl+e',
+   509→    (e) => {
+   510→      e.preventDefault()
+   511→      if (!carrito || carrito.items.length === 0) return
+   512→      const i = lineaSel < 0 ? 0 : lineaSel
+   513→      setLineaSel(i)
+   514→      const it = carrito.items[i]
+   515→      const ref = preciosRefs.current[it.productoId]
+   516→      ref?.focus()
+   517→      ref?.select()
+   518→    },
+   519→    { enabled: () => !modalCliente && !modalCobro && !ticketData }
+   520→  )
+   521→
+   522→  // Esc en el buscador: limpiar la búsqueda actual
+   523→  useHotkeys(
+   524→    'esc',
+   525→    () => {
+   526→      setBusqueda('')
+   527→    },
+   528→    { enabled: () => document.activeElement === busquedaRef.current }
+   529→  )
+   530→
+   531→  if (!tallerId || !taller) {
+   532→    return <p className="text-muted-foreground">No hay taller disponible para vender.</p>
+   533→  }
+   534→
+   535→  const cambio = Math.round((cubierto - totales.cup) * 100) / 100
+   536→
+   537→  return (
+   538→    <div className="grid lg:grid-cols-[1fr_420px] xl:grid-cols-[1fr_460px] gap-4 items-start">
+   539→      {/* ==================== IZQUIERDA: BUSCADOR + PRODUCTOS ==================== */}
+   540→      <div className="space-y-3 min-w-0">
+   541→        <Card>
+   542→          <CardContent className="p-3 space-y-2">
+   543→            <div className="flex gap-2">
+   544→              <div className="relative flex-1">
+   545→                <ScanLine className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-brand-red" aria-hidden />
+   546→                <Input
+   547→                  ref={busquedaRef}
+   548→                  value={busqueda}
+   549→                  onChange={(e) => setBusqueda(e.target.value)}
+   550→                  onKeyDown={(e) => {
+   551→                    if (e.key === 'Enter') {
+   552→                      e.preventDefault()
+   553→                      alEnterBuscador()
+   554→                    }
+   555→                  }}
+   556→                  placeholder="Escanee el código de barras o busque por nombre…"
+   557→                  className="pl-8 h-11 font-mono"
+   558→                  aria-label="Buscar producto o escanear código de barras (F2)"
+   559→                  autoFocus
+   560→                />
+   561→              </div>
+   562→              <Button
+   563→                variant="outline"
+   564→                size="icon"
+   565→                className="h-11 w-11"
+   566→                onClick={() => setSonido(alternarSonidos())}
+   567→                aria-label={sonido ? 'Desactivar sonidos del POS' : 'Activar sonidos del POS'}
+   568→                title={sonido ? 'Sonidos activados' : 'Sonidos desactivados'}
+   569→              >
+   570→                {sonido ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4 text-muted-foreground" />}
+   571→              </Button>
+   572→            </div>
+   573→            {/* Pista de atajos del POS */}
+   574→            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+   575→              <span className="flex items-center gap-1"><Kbd>F2</Kbd> buscar</span>
+   576→              <span className="flex items-center gap-1"><Kbd>F4</Kbd> carrito</span>
+   577→              <span className="flex items-center gap-1"><Kbd>F8</Kbd> cliente</span>
+   578→              <span className="flex items-center gap-1"><Kbd>F9</Kbd> cobrar</span>
+   579→              <span className="flex items-center gap-1"><Kbd>↑↓</Kbd> líneas · <Kbd>+</Kbd>/<Kbd>−</Kbd> cant. · <Kbd>Ctrl</Kbd>+<Kbd>E</Kbd> precio · <Kbd>Ctrl</Kbd>+<Kbd>Supr</Kbd> quitar</span>
+   580→              <span className="flex items-center gap-1"><Kbd>Shift</Kbd>+<Kbd>?</Kbd> todos los atajos</span>
+   581→            </div>
+   582→            <div className="flex flex-wrap items-center gap-2 text-sm">
+   583→              <span className="text-muted-foreground">Tasas (USD/EUR → CUP):</span>
+   584→              <Input
+   585→                className="w-24 h-8 num-tabular"
+   586→                value={tasasEdit.USD}
+   587→                onChange={(e) => setTasasEdit((t) => ({ ...t, USD: e.target.value }))}
+   588→                aria-label="Tasa USD"
+   589→                inputMode="decimal"
+   590→              />
+   591→              <Input
+   592→                className="w-24 h-8 num-tabular"
+   593→                value={tasasEdit.EUR}
+   594→                onChange={(e) => setTasasEdit((t) => ({ ...t, EUR: e.target.value }))}
+   595→                aria-label="Tasa EUR"
+   596→                inputMode="decimal"
+   597→              />
+   598→              <Button size="sm" variant="outline" onClick={guardarTasas}>
+   599→                Actualizar tasas
+   600→              </Button>
+   601→            </div>
+   602→          </CardContent>
+   603→        </Card>
+   604→
+   605→        <div data-tabla="filas" className="grid sm:grid-cols-2 xl:grid-cols-3 gap-2 max-h-[calc(100vh-330px)] overflow-y-auto pr-1">
+   606→          {productosFiltrados.map((p) => {
+   607→            const precioCUP = aCUP(p.precio, p.monedaPrecio, tasas)
+   608→            const sinStock = !esServicio(p.tipo) && p.cantidad <= 0
+   609→            return (
+   610→              <button
+   611→                key={p.id}
+   612→                onClick={() => agregarProducto(p)}
+   613→                disabled={sinStock}
+   614→                className="text-left rounded-xl border bg-card p-3 hover:border-brand-red hover:shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+   615→              >
+   616→                <div className="flex items-start justify-between gap-2">
+   617→                  <span className="font-medium text-sm leading-tight line-clamp-2">{p.nombre}</span>
+   618→                  {esServicio(p.tipo) ? (
+   619→                    <Wrench className="h-4 w-4 text-warning shrink-0" aria-label="Servicio" />
+   620→                  ) : (
+   621→                    <Package className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden />
+   622→                  )}
+   623→                </div>
+   624→                <div className="mt-1 flex items-center justify-between gap-2">
+   625→                  <span className="text-xs text-muted-foreground truncate">{p.categoria}</span>
+   626→                  {!esServicio(p.tipo) && (
+   627→                    <Badge variant={p.cantidad > 0 ? 'secondary' : 'destructive'} className="text-[10px] num-tabular">
+   628→                      stock {p.cantidad}
+   629→                    </Badge>
+   630→                  )}
+   631→                </div>
+   632→                <div className="mt-1.5 font-bold text-brand-red num-tabular">
+   633→                  {fmt(p.precio)} {p.monedaPrecio}
+   634→                  {p.monedaPrecio !== 'CUP' && (
+   635→                    <span className="ml-1 text-xs font-normal text-muted-foreground num-tabular">≈ {fmt(precioCUP)} CUP</span>
+   636→                  )}
+   637→                </div>
+   638→              </button>
+   639→            )
+   640→          })}
+   641→          {productosFiltrados.length === 0 && (
+   642→            <p className="col-span-full text-sm text-muted-foreground py-8 text-center">
+   643→              No se encontraron productos{busqueda ? ' para esa búsqueda' : ' en este taller'}.
+   644→            </p>
+   645→          )}
+   646→        </div>
+   647→      </div>
+   648→
+   649→      {/* ==================== DERECHA: CARRITO ==================== */}
+   650→      <Card className="lg:sticky lg:top-32">
+   651→        <CardHeader className="p-3 pb-0 space-y-2">
+   652→          <div className="flex items-center justify-between gap-2 flex-wrap">
+   653→            <CardTitle className="text-base">Carrito</CardTitle>
+   654→            <div className="flex gap-1 flex-wrap items-center">
+   655→              {carritosTaller.map((c) => (
+   656→                <button
+   657→                  key={c.id}
+   658→                  onClick={() => setCarritoActivo(c.id)}
+   659→                  className={`px-2.5 h-7 rounded-md text-xs font-medium border transition-colors num-tabular ${
+   660→                    carrito?.id === c.id
+   661→                      ? 'bg-brand-red text-white border-brand-red'
+   662→                      : 'bg-card hover:bg-accent'
+   663→                  }`}
+   664→                  aria-pressed={carrito?.id === c.id}
+   665→                >
+   666→                  {c.nombre} {c.items.length > 0 && `(${c.items.length})`}
+   667→                </button>
+   668→              ))}
+   669→              <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => nuevoCarrito(tallerId)} aria-label="Nuevo carrito (F4)" title="Nuevo carrito (F4)">
+   670→                <Plus className="h-3.5 w-3.5" />
+   671→              </Button>
+   672→            </div>
+   673→          </div>
+   674→          {/* Cliente */}
+   675→          <div className="flex items-center gap-2">
+   676→            {carrito?.clienteId ? (
+   677→              <>
+   678→                <User className="h-4 w-4 text-brand-red shrink-0" aria-hidden />
+   679→                <span className="text-sm truncate flex-1">{carrito.clienteNombre}</span>
+   680→                <Button
+   681→                  size="sm"
+   682→                  variant="ghost"
+   683→                  className="h-7 px-2"
+   684→                  onClick={() => carrito && setCliente(carrito.id, null)}
+   685→                  aria-label="Quitar cliente"
+   686→                >
+   687→                  <X className="h-3.5 w-3.5" />
+   688→                </Button>
+   689→              </>
+   690→            ) : (
+   691→              <>
+   692→                <span className="text-sm text-muted-foreground flex-1">Consumidor final</span>
+   693→                <Button size="sm" variant="outline" onClick={() => setModalCliente(true)} aria-label="Asignar cliente (F8)" title="Asignar cliente (F8)">
+   694→                  <UserPlus className="h-3.5 w-3.5 mr-1" /> Cliente <Kbd className="ml-1.5 hidden md:inline-flex">F8</Kbd>
+   695→                </Button>
+   696→              </>
+   697→            )}
+   698→          </div>
+   699→        </CardHeader>
+   700→        <CardContent className="p-3 space-y-3">
+   701→          {/* Líneas */}
+   702→          <div ref={contenedorLineas} className="max-h-[38vh] overflow-y-auto space-y-2 pr-1" role="listbox" aria-label="Líneas del carrito">
+   703→            {items.map((it, i) => {
+   704→              const subtotal = aCUP(it.precio, it.moneda, tasas) * it.cantidad
+   705→              const faltaOperario = esServicio(it.tipo) && !it.operarioId
+   706→              const seleccionada = i === lineaSel
+   707→              return (
+   708→                <div
+   709→                  key={it.productoId}
+   710→                  data-indice={i}
+   711→                  role="option"
+   712→                  tabIndex={0}
+   713→                  aria-selected={seleccionada}
+   714→                  onClick={() => setLineaSel(i)}
+   715→                  onKeyDown={(e) => {
+   716→                    if (e.key === 'Delete' && carrito) {
+   717→                      e.preventDefault()
+   718→                      quitarItem(carrito.id, it.productoId)
+   719→                    }
+   720→                  }}
+   721→                  className={`rounded-lg border p-2 space-y-1.5 cursor-pointer outline-none transition-colors ${
+   722→                    seleccionada
+   723→                      ? 'border-brand-red ring-2 ring-ring/60 bg-accent/60'
+   724→                      : faltaOperario
+   725→                        ? 'border-destructive'
+   726→                        : 'bg-muted/50'
+   727→                  } ${faltaOperario && seleccionada ? 'border-destructive' : ''}`}
+   728→                >
+   729→                  <div className="flex items-start justify-between gap-2">
+   730→                    <span className="text-sm font-medium leading-tight">{it.nombre}</span>
+   731→                    <Button
+   732→                      variant="ghost"
+   733→                      className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+   734→                      onClick={() => carrito && quitarItem(carrito.id, it.productoId)}
+   735→                      aria-label={`Quitar ${it.nombre}`}
+   736→                    >
+   737→                      <Trash2 className="h-3.5 w-3.5" />
+   738→                    </Button>
+   739→                  </div>
+   740→                  <div className="flex items-center gap-1.5 flex-wrap">
+   741→                    {!esServicio(it.tipo) ? (
+   742→                      <div className="flex items-center border rounded-md h-8 bg-card">
+   743→                        <Button
+   744→                          variant="ghost"
+   745→                          className="h-8 w-8 p-0"
+   746→                          onClick={() => carrito && cambiarCantidad(carrito.id, it.productoId, it.cantidad - 1)}
+   747→                          aria-label="Restar"
+   748→                        >
+   749→                          <Minus className="h-3 w-3" />
+   750→                        </Button>
+   751→                        <span className="w-8 text-center text-sm num-tabular">{it.cantidad}</span>
+   752→                        <Button
+   753→                          variant="ghost"
+   754→                          className="h-8 w-8 p-0"
+   755→                          disabled={it.cantidad >= it.stock}
+   756→                          onClick={() => carrito && cambiarCantidad(carrito.id, it.productoId, it.cantidad + 1)}
+   757→                          aria-label="Sumar"
+   758→                        >
+   759→                          <Plus className="h-3 w-3" />
+   760→                        </Button>
+   761→                      </div>
+   762→                    ) : (
+   763→                      <Badge variant="outline" className="text-[10px]">servicio ×1</Badge>
+   764→                    )}
+   765→                    <div className="flex items-center gap-1">
+   766→                      <Input
+   767→                        ref={(el) => {
+   768→                          preciosRefs.current[it.productoId] = el
+   769→                        }}
+   770→                        className="w-24 h-8 text-sm num-tabular"
+   771→                        value={it.precio}
+   772→                        inputMode="decimal"
+   773→                        onChange={(e) => {
+   774→                          const v = parseFloat(e.target.value)
+   775→                          if (isFinite(v) && v >= 0 && carrito) cambiarPrecio(carrito.id, it.productoId, v)
+   776→                        }}
+   777→                        onFocus={() => setLineaSel(i)}
+   778→                        aria-label={`Precio de ${it.nombre} (Ctrl+E)`}
+   779→                      />
+   780→                      <span className="text-xs text-muted-foreground">{it.moneda}</span>
+   781→                    </div>
+   782→                    <span className="ml-auto text-sm font-semibold num-tabular">{fmt(subtotal)} CUP</span>
+   783→                  </div>
+   784→                  <div className="flex items-center gap-1.5">
+   785→                    <Select
+   786→                      value={it.operarioId ?? ''}
+   787→                      onValueChange={(v) =>
+   788→                        carrito && asignarOperario(carrito.id, it.productoId, v === '__ninguno__' ? null : v)
+   789→                      }
+   790→                    >
+   791→                      <SelectTrigger
+   792→                        className={`h-8 text-xs flex-1 ${faltaOperario ? 'border-destructive text-destructive' : ''}`}
+   793→                        aria-label={`Operario de ${it.nombre}`}
+   794→                      >
+   795→                        <SelectValue placeholder={faltaOperario ? 'Operario (obligatorio)' : 'Operario…'} />
+   796→                      </SelectTrigger>
+   797→                      <SelectContent>
+   798→                        <SelectItem value="__ninguno__">— Sin operario —</SelectItem>
+   799→                        {operarios.map((o) => (
+   800→                          <SelectItem key={o.id} value={o.id}>
+   801→                            {o.nombre}
+   802→                          </SelectItem>
+   803→                        ))}
+   804→                      </SelectContent>
+   805→                    </Select>
+   806→                    {it.precio !== it.precioOriginal && (
+   807→                      <Badge
+   808→                        variant="outline"
+   809→                        className="text-[10px] text-warning border-warning/50"
+   810→                        title={`Precio original: ${it.precioOriginal}`}
+   811→                      >
+   812→                        precio editado
+   813→                      </Badge>
+   814→                    )}
+   815→                  </div>
+   816→                </div>
+   817→              )
+   818→            })}
+   819→            {items.length === 0 && (
+   820→              <p className="text-sm text-muted-foreground text-center py-6">
+   821→                Toque un producto o escanee su código de barras.
+   822→              </p>
+   823→            )}
+   824→          </div>
+   825→
+   826→          {/* Totales */}
+   827→          <div className="rounded-lg border bg-card p-2.5 space-y-1 text-sm">
+   828→            <div className="flex justify-between">
+   829→              <span className="text-muted-foreground">Total</span>
+   830→              <span className="font-bold text-lg num-tabular">{fmtCUP(totales.cup)}</span>
+   831→            </div>
+   832→            <div className="flex justify-between text-xs text-muted-foreground num-tabular">
+   833→              <span>Equivalente</span>
+   834→              <span>{fmt(totales.usd)} USD</span>
+   835→            </div>
+   836→          </div>
+   837→
+   838→          <Button
+   839→            className="w-full h-12 text-base font-semibold bg-brand-red hover:bg-brand-red-hover"
+   840→            onClick={abrirCobro}
+   841→            disabled={!carrito || items.length === 0}
+   842→            aria-label="Cobrar (F9)"
+   843→          >
+   844→            <CreditCard className="h-5 w-5 mr-2" />
+   845→            Cobrar · {fmtCUP(totales.cup)}
+   846→            <Kbd className="ml-2 border-white/40 bg-white/15 text-white">F9</Kbd>
+   847→          </Button>
+   848→        </CardContent>
+   849→      </Card>
+   850→
+   851→      {/* ==================== MODAL CLIENTE (F8) ==================== */}
+   852→      <Dialog open={modalCliente} onOpenChange={setModalCliente}>
+   853→        <DialogContent className="max-w-md">
+   854→          <DialogHeader>
+   855→            <DialogTitle>Asignar cliente</DialogTitle>
+   856→            <DialogDescription>Busque por nombre, teléfono o CI, o cree uno nuevo (se permiten homónimos).</DialogDescription>
+   857→          </DialogHeader>
+   858→          <div className="space-y-3">
+   859→            <div className="flex gap-2">
+   860→              <Input
+   861→                placeholder="Buscar por nombre, teléfono o CI…"
+   862→                value={busqCliente}
+   863→                onChange={(e) => setBusqCliente(e.target.value)}
+   864→                onKeyDown={(e) => {
+   865→                  if (e.key === 'Enter') {
+   866→                    e.preventDefault()
+   867→                    buscarClientes(busqCliente)
+   868→                  }
+   869→                }}
+   870→                aria-label="Buscar cliente"
+   871→              />
+   872→              <Button variant="outline" onClick={() => buscarClientes(busqCliente)}>
+   873→                Buscar
+   874→              </Button>
+   875→            </div>
+   876→            <div className="max-h-48 overflow-y-auto rounded-lg border divide-y">
+   877→              {resultadosCliente.map((c) => (
+   878→                <button
+   879→                  key={c.id}
+   880→                  className="w-full text-left px-3 py-2 hover:bg-accent text-sm"
+   881→                  onClick={() => {
+   882→                    if (carrito) setCliente(carrito.id, { id: c.id, nombre: c.nombre })
+   883→                    setModalCliente(false)
+   884→                  }}
+   885→                >
+   886→                  <span className="font-medium">{c.nombre}</span>
+   887→                  <span className="text-muted-foreground text-xs ml-2">
+   888→                    {c.telefono ?? ''} {c.ci ? `· CI ${c.ci}` : ''}
+   889→                  </span>
+   890→                </button>
+   891→              ))}
+   892→              {resultadosCliente.length === 0 && (
+   893→                <p className="px-3 py-4 text-sm text-muted-foreground text-center">
+   894→                  Sin resultados. Puede crear el cliente abajo (los homónimos están permitidos).
+   895→                </p>
+   896→              )}
+   897→            </div>
+   898→            <div className="border-t pt-3 space-y-2">
+   899→              <p className="text-sm font-medium">Crear nuevo cliente</p>
+   900→              <div className="grid grid-cols-2 gap-2">
+   901→                <div className="col-span-2">
+   902→                  <Label htmlFor="cli-nombre">Nombre</Label>
+   903→                  <Input
+   904→                    id="cli-nombre"
+   905→                    value={nuevoCliente.nombre}
+   906→                    onChange={(e) => setNuevoCliente((c) => ({ ...c, nombre: e.target.value }))}
+   907→                  />
+   908→                </div>
+   909→                <div>
+   910→                  <Label htmlFor="cli-tel">Teléfono</Label>
+   911→                  <Input
+   912→                    id="cli-tel"
+   913→                    value={nuevoCliente.telefono}
+   914→                    onChange={(e) => setNuevoCliente((c) => ({ ...c, telefono: e.target.value }))}
+   915→                  />
+   916→                </div>
+   917→                <div>
+   918→                  <Label htmlFor="cli-ci">CI</Label>
+   919→                  <Input id="cli-ci" value={nuevoCliente.ci} onChange={(e) => setNuevoCliente((c) => ({ ...c, ci: e.target.value }))} />
+   920→                </div>
+   921→              </div>
+   922→              <Button className="w-full bg-brand-red hover:bg-brand-red-hover" onClick={crearCliente}>
+   923→                Crear y asignar
+   924→              </Button>
+   925→            </div>
+   926→          </div>
+   927→        </DialogContent>
+   928→      </Dialog>
+   929→
+   930→      {/* ==================== MODAL DE COBRO (F9 / Enter confirma) ==================== */}
+   931→      <Dialog open={modalCobro} onOpenChange={setModalCobro}>
+   932→        <DialogContent className="max-w-lg">
+   933→          <DialogHeader>
+   934→            <DialogTitle>Cobrar venta</DialogTitle>
+   935→            <DialogDescription>
+   936→              Puede registrar varios pagos mezclando métodos y monedas. <Kbd>Enter</Kbd> confirma la venta.
+   937→            </DialogDescription>
+   938→          </DialogHeader>
+   939→          <form onSubmit={confirmarVenta} className="space-y-3">
+   940→            {/* Resumen */}
+   941→            <div className="rounded-lg border bg-muted/50 p-3 flex items-center justify-between">
+   942→              <div className="text-sm text-muted-foreground">
+   943→                {items.length} {items.length === 1 ? 'línea' : 'líneas'}
+   944→                {carrito?.clienteNombre ? ` · ${carrito.clienteNombre}` : ' · Consumidor final'}
+   945→              </div>
+   946→              <div className="text-right">
+   947→                <div className="text-2xl font-bold text-brand-red num-tabular leading-none">{fmtCUP(totales.cup)}</div>
+   948→                <div className="text-xs text-muted-foreground num-tabular">≈ {fmt(totales.usd)} USD</div>
+   949→              </div>
+   950→            </div>
+   951→
+   952→            {/* Pagos */}
+   953→            <div className="space-y-2">
+   954→              <div className="flex items-center justify-between">
+   955→                <span className="text-sm font-medium flex items-center gap-1">
+   956→                  <CreditCard className="h-4 w-4" aria-hidden /> Pagos
+   957→                </span>
+   958→                <Button type="button" size="sm" variant="outline" onClick={agregarPago}>
+   959→                  <Plus className="h-3.5 w-3.5 mr-1" /> Pago
+   960→                </Button>
+   961→              </div>
+   962→              {pagosActivos.map((p, i) => (
+   963→                <div key={i} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-1.5 items-center">
+   964→                  <Select
+   965→                    value={p.metodo}
+   966→                    onValueChange={(v) => actualizarPago(i, { metodo: v, ...(v === 'ZELLE' ? { moneda: 'USD' } : {}) })}
+   967→                  >
+   968→                    <SelectTrigger className="h-8 text-xs" aria-label="Método de pago">
+   969→                      <SelectValue />
+   970→                    </SelectTrigger>
+   971→                    <SelectContent>
+   972→                      {METODOS.map((m) => (
+   973→                        <SelectItem key={m} value={m}>
+   974→                          {METODO_PAGO_LABEL[m]}
+   975→                        </SelectItem>
+   976→                      ))}
+   977→                    </SelectContent>
+   978→                  </Select>
+   979→                  <Select value={p.moneda} onValueChange={(v) => actualizarPago(i, { moneda: v })} disabled={p.metodo === 'ZELLE'}>
+   980→                    <SelectTrigger className="h-8 text-xs" aria-label="Moneda del pago">
+   981→                      <SelectValue />
+   982→                    </SelectTrigger>
+   983→                    <SelectContent>
+   984→                      {MONEDAS.map((m) => (
+   985→                        <SelectItem key={m} value={m} disabled={p.metodo === 'ZELLE' && m !== 'USD'}>
+   986→                          {m}
+   987→                        </SelectItem>
+   988→                      ))}
+   989→                    </SelectContent>
+   990→                  </Select>
+   991→                  <Input
+   992→                    className="h-8 text-xs num-tabular"
+   993→                    inputMode="decimal"
+   994→                    value={p.monto}
+   995→                    placeholder="Monto"
+   996→                    onChange={(e) => actualizarPago(i, { monto: e.target.value })}
+   997→                    aria-label="Monto del pago"
+   998→                    required={i === 0}
+   999→                    autoFocus={i === 0}
+  1000→                  />
+  1001→                  <Button
+  1002→                    type="button"
+  1003→                    variant="ghost"
+  1004→                    className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+  1005→                    onClick={() => quitarPago(i)}
+  1006→                    aria-label="Quitar pago"
+  1007→                  >
+  1008→                    <Trash2 className="h-3.5 w-3.5" />
+  1009→                  </Button>
+  1010→                  {p.metodo === 'ZELLE' && (
+  1011→                    <Input
+  1012→                      className="h-8 text-xs col-span-4"
+  1013→                      value={p.referencia}
+  1014→                      placeholder="Referencia Zelle (obligatoria)"
+  1015→                      onChange={(e) => actualizarPago(i, { referencia: e.target.value })}
+  1016→                      aria-label="Referencia Zelle"
+  1017→                    />
+  1018→                  )}
+  1019→                </div>
+  1020→              ))}
+  1021→              {pagosActivos.length > 0 && (
+  1022→                <div className="flex justify-between text-sm border-t pt-1.5 num-tabular">
+  1023→                  <span className="text-muted-foreground">Cubierto</span>
+  1024→                  <span className={faltante > 0.001 ? 'text-destructive font-semibold' : 'text-success font-semibold'}>
+  1025→                    {fmt(cubierto)} CUP {faltante > 0.001 ? `(faltan ${fmt(faltante)})` : cambio > 0.001 ? `· cambio ${fmt(cambio)}` : '✓'}
+  1026→                  </span>
+  1027→                </div>
+  1028→              )}
+  1029→              {itemsInvalidos.length > 0 && (
+  1030→                <p className="text-xs text-destructive">
+  1031→                  Hay líneas inválidas: servicios sin operario o cantidad mayor que el stock.
+  1032→                </p>
+  1033→              )}
+  1034→            </div>
+  1035→
+  1036→            <div className="flex gap-2 justify-end pt-1">
+  1037→              <Button type="button" variant="outline" onClick={() => setModalCobro(false)} disabled={confirmando}>
+  1038→                Cancelar
+  1039→              </Button>
+  1040→              <Button
+  1041→                type="submit"
+  1042→                className="h-10 px-6 font-semibold bg-brand-red hover:bg-brand-red-hover"
+  1043→                disabled={confirmando || items.length === 0}
+  1044→              >
+  1045→                {confirmando && <Loader2 className="h-4 w-4 animate-spin" />}
+  1046→                {confirmando ? 'Registrando…' : 'Confirmar venta'}
+  1047→                <Kbd className="ml-2 border-white/40 bg-white/15 text-white">Enter</Kbd>
+  1048→              </Button>
+  1049→            </div>
+  1050→          </form>
+  1051→        </DialogContent>
+  1052→      </Dialog>
+  1053→
+  1054→      {/* ==================== MODAL TICKET ==================== */}
+  1055→      <Dialog open={!!ticketData} onOpenChange={(o) => !o && setTicketData(null)}>
+  1056→        <DialogContent className="max-w-fit p-0 overflow-auto bg-muted border-0">
+  1057→          <DialogHeader className="sr-only">
+  1058→            <DialogTitle>Ticket de venta</DialogTitle>
+  1059→            <DialogDescription>Vista previa imprimible del ticket de la venta registrada.</DialogDescription>
+  1060→          </DialogHeader>
+  1061→          <div className="p-4 max-h-[80vh] overflow-auto">
+  1062→            {ticketData && (
+  1063→              <div className="bg-white shadow-lg rounded-sm text-black" style={{ width: `${ticketData.ajustes.ticketAncho ?? '58'}mm` }}>
+  1064→                <TicketVenta
+  1065→                  data={{
+  1066→                    codigo: ticketData.venta.codigo,
+  1067→                    fecha: ticketData.venta.fecha,
+  1068→                    taller: ticketData.venta.taller,
+  1069→                    cliente: ticketData.venta.cliente?.nombre ?? null,
+  1070→                    vendedor: ticketData.venta.vendedor.nombre,
+  1071→                    items: ticketData.venta.items.map((i) => ({
+  1072→                      nombre: i.producto.nombre,
+  1073→                      cantidad: i.cantidad,
+  1074→                      precio: i.precioUnitario,
+  1075→                      moneda: i.monedaPrecio,
+  1076→                      subtotalCUP: i.subtotalCUP,
+  1077→                      operario: i.operario?.nombre ?? null,
+  1078→                    })),
+  1079→                    totalCUP: ticketData.venta.totalCUP,
+  1080→                    pagos: ticketData.venta.pagos.map((p) => ({
+  1081→                      metodo: METODO_PAGO_LABEL[p.metodo] ?? p.metodo,
+  1082→                      moneda: p.moneda,
+  1083→                      monto: p.monto,
+  1084→                      montoCUP: p.montoCUP,
+  1085→                      referencia: p.referencia,
+  1086→                    })),
+  1087→                    encabezado: ticketData.ajustes.ticketEncabezado,
+  1088→                    pie: ticketData.ajustes.ticketPie,
+  1089→                    ancho: ticketData.ajustes.ticketAncho ?? '58',
+  1090→                  }}
+  1091→                />
+  1092→              </div>
+  1093→            )}
+  1094→          </div>
+  1095→          <div className="flex gap-2 justify-center p-3 bg-card border-t">
+  1096→            <Button onClick={() => window.print()} autoFocus className="bg-brand-red hover:bg-brand-red-hover">
+  1097→              <Printer className="h-4 w-4 mr-2" /> Imprimir ticket <Kbd className="ml-2 border-white/40 bg-white/15 text-white">Enter</Kbd>
+  1098→            </Button>
+  1099→            <Button variant="outline" onClick={() => setTicketData(null)}>
+  1100→              Cerrar
+  1101→            </Button>
+  1102→          </div>
+  1103→        </DialogContent>
+  1104→      </Dialog>
+  1105→    </div>
+  1106→  )
+  1107→}
+  1108→

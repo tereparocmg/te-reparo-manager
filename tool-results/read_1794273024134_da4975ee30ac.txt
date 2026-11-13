@@ -1,0 +1,815 @@
+     1→'use client'
+     2→import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+     3→import { Button } from '@/components/ui/button'
+     4→import { Input } from '@/components/ui/input'
+     5→import { Label } from '@/components/ui/label'
+     6→import { Badge } from '@/components/ui/badge'
+     7→import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+     8→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+     9→import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+    10→import { toast } from 'sonner'
+    11→import {
+    12→  Search, Plus, Minus, Trash2, UserPlus, User, CreditCard, Printer, X, Package, Wrench,
+    13→} from 'lucide-react'
+    14→import { api } from '@/lib/api-client'
+    15→import { useApp } from '@/lib/store'
+    16→import { fmt, fmtCUP, aCUP, esServicio, METODO_PAGO_LABEL } from '@/lib/formato'
+    17→import { TicketVenta } from '../ticket'
+    18→
+    19→interface Producto {
+    20→  id: string
+    21→  nombre: string
+    22→  categoria: string
+    23→  tipo: string
+    24→  cantidad: number
+    25→  precio: number
+    26→  monedaPrecio: string
+    27→  codigoInterno: string
+    28→  codigoBarras: string
+    29→  activo: boolean
+    30→}
+    31→
+    32→interface Operario {
+    33→  id: string
+    34→  nombre: string
+    35→  rama: string
+    36→  activo: boolean
+    37→  talleres: Array<{ tallerId: string }>
+    38→}
+    39→
+    40→interface Cliente {
+    41→  id: string
+    42→  nombre: string
+    43→  telefono: string | null
+    44→  ci: string | null
+    45→}
+    46→
+    47→interface Pago {
+    48→  metodo: string
+    49→  moneda: string
+    50→  monto: string
+    51→  referencia: string
+    52→}
+    53→
+    54→interface VentaDetalle {
+    55→  venta: {
+    56→    codigo: string
+    57→    fecha: string
+    58→    totalCUP: number
+    59→    taller: { nombre: string; direccion: string; telefono: string }
+    60→    cliente: { nombre: string } | null
+    61→    vendedor: { nombre: string }
+    62→    items: Array<{
+    63→      cantidad: number
+    64→      precioUnitario: number
+    65→      monedaPrecio: string
+    66→      subtotalCUP: number
+    67→      producto: { nombre: string }
+    68→      operario: { nombre: string } | null
+    69→    }>
+    70→    pagos: Array<{ metodo: string; moneda: string; monto: number; montoCUP: number; referencia: string | null }>
+    71→  }
+    72→  ajustes: Record<string, string>
+    73→}
+    74→
+    75→const MONEDAS = ['CUP', 'USD', 'EUR']
+    76→const METODOS = ['EFECTIVO', 'TRANSFERENCIA', 'ZELLE']
+    77→
+    78→export function Pos() {
+    79→  const usuario = useApp((s) => s.usuario)
+    80→  const tasas = useApp((s) => s.tasas)
+    81→  const setTasas = useApp((s) => s.setTasas)
+    82→  const ajustes = useApp((s) => s.ajustes)
+    83→  const tallerActivoId = useApp((s) => s.tallerActivoId)
+    84→  const talleres = useApp((s) => s.talleres)
+    85→
+    86→  const carritos = useApp((s) => s.carritos)
+    87→  const carritoActivo = useApp((s) => s.carritoActivo)
+    88→  const nuevoCarrito = useApp((s) => s.nuevoCarrito)
+    89→  const cerrarCarrito = useApp((s) => s.cerrarCarrito)
+    90→  const setCarritoActivo = useApp((s) => s.setCarritoActivo)
+    91→  const agregarItem = useApp((s) => s.agregarItem)
+    92→  const quitarItem = useApp((s) => s.quitarItem)
+    93→  const cambiarCantidad = useApp((s) => s.cambiarCantidad)
+    94→  const cambiarPrecio = useApp((s) => s.cambiarPrecio)
+    95→  const asignarOperario = useApp((s) => s.asignarOperario)
+    96→  const setCliente = useApp((s) => s.setCliente)
+    97→
+    98→  const tallerId = usuario?.rol === 'VENDEDOR' ? usuario.tallerId : tallerActivoId ?? talleres[0]?.id
+    99→  const taller = talleres.find((t) => t.id === tallerId)
+   100→
+   101→  const [productos, setProductos] = useState<Producto[]>([])
+   102→  const [operarios, setOperarios] = useState<Operario[]>([])
+   103→  const [busqueda, setBusqueda] = useState('')
+   104→  const [codigoBarras, setCodigoBarras] = useState('')
+   105→  const [pagos, setPagos] = useState<Record<string, Pago[]>>({})
+   106→  const [confirmando, setConfirmando] = useState(false)
+   107→  const [ticketData, setTicketData] = useState<VentaDetalle | null>(null)
+   108→  const [modalCliente, setModalCliente] = useState(false)
+   109→  const [busqCliente, setBusqCliente] = useState('')
+   110→  const [resultadosCliente, setResultadosCliente] = useState<Cliente[]>([])
+   111→  const [nuevoCliente, setNuevoCliente] = useState({ nombre: '', telefono: '', ci: '' })
+   112→  const [tasasEdit, setTasasEdit] = useState({ USD: String(tasas.USD), EUR: String(tasas.EUR) })
+   113→  const codigoRef = useRef<HTMLInputElement>(null)
+   114→
+   115→  const carritosTaller = useMemo(() => carritos.filter((c) => c.tallerId === tallerId), [carritos, tallerId])
+   116→  const carrito = useMemo(
+   117→    () => carritosTaller.find((c) => c.id === carritoActivo) ?? carritosTaller[carritosTaller.length - 1] ?? null,
+   118→    [carritosTaller, carritoActivo]
+   119→  )
+   120→  const pagosActivos = carrito ? pagos[carrito.id] ?? [] : []
+   121→
+   122→  const cargarProductos = useCallback(async () => {
+   123→    if (!tallerId) return
+   124→    try {
+   125→      const res = await api.get<{ productos: Producto[] }>(`/api/productos?tallerId=${tallerId}&activo=true`)
+   126→      setProductos(res.productos)
+   127→    } catch (e) {
+   128→      toast.error(e instanceof Error ? e.message : 'Error al cargar productos')
+   129→    }
+   130→  }, [tallerId])
+   131→
+   132→  useEffect(() => {
+   133→    cargarProductos()
+   134→    if (tallerId) {
+   135→      api
+   136→        .get<{ operarios: Operario[] }>(`/api/operarios?tallerId=${tallerId}`)
+   137→        .then((r) => setOperarios(r.operarios.filter((o) => o.activo)))
+   138→        .catch(() => setOperarios([]))
+   139→    }
+   140→    setTasasEdit({ USD: String(tasas.USD), EUR: String(tasas.EUR) })
+   141→     
+   142→  }, [tallerId])
+   143→
+   144→  // Carrito inicial
+   145→  useEffect(() => {
+   146→    if (tallerId && carritosTaller.length === 0) nuevoCarrito(tallerId)
+   147→     
+   148→  }, [tallerId, carritosTaller.length])
+   149→
+   150→  const productosFiltrados = useMemo(() => {
+   151→    const q = busqueda.trim().toLowerCase()
+   152→    if (!q) return productos
+   153→    return productos.filter(
+   154→      (p) =>
+   155→        p.nombre.toLowerCase().includes(q) ||
+   156→        p.codigoInterno.toLowerCase().includes(q) ||
+   157→        p.codigoBarras.toLowerCase().includes(q) ||
+   158→        p.categoria.toLowerCase().includes(q)
+   159→    )
+   160→  }, [productos, busqueda])
+   161→
+   162→  const totales = useMemo(() => {
+   163→    if (!carrito) return { cup: 0, usd: 0 }
+   164→    const cup = carrito.items.reduce((acc, it) => acc + aCUP(it.precio, it.moneda, tasas) * it.cantidad, 0)
+   165→    return { cup: Math.round(cup * 100) / 100, usd: tasas.USD > 0 ? Math.round((cup / tasas.USD) * 100) / 100 : 0 }
+   166→  }, [carrito, tasas])
+   167→
+   168→  const cubierto = useMemo(
+   169→    () => pagosActivos.reduce((acc, p) => acc + aCUP(parseFloat(p.monto || '0'), p.moneda, tasas), 0),
+   170→    [pagosActivos, tasas]
+   171→  )
+   172→  const faltante = Math.round((totales.cup - cubierto) * 100) / 100
+   173→
+   174→  const itemsInvalidos = useMemo(() => {
+   175→    if (!carrito) return []
+   176→    return carrito.items.filter(
+   177→      (it) => (esServicio(it.tipo) && !it.operarioId) || (!esServicio(it.tipo) && it.cantidad > it.stock)
+   178→    )
+   179→  }, [carrito])
+   180→
+   181→  function agregarProducto(p: Producto) {
+   182→    if (!tallerId) return
+   183→    const stockDisponible = productos.find((x) => x.id === p.id)?.cantidad ?? 0
+   184→    const enCarrito = carrito?.items.find((i) => i.productoId === p.id)?.cantidad ?? 0
+   185→    if (!esServicio(p.tipo) && enCarrito >= stockDisponible) {
+   186→      toast.error(`Stock insuficiente de ${p.nombre} (disponible ${stockDisponible})`)
+   187→      return
+   188→    }
+   189→    agregarItem(tallerId, {
+   190→      productoId: p.id,
+   191→      nombre: p.nombre,
+   192→      tipo: p.tipo,
+   193→      cantidad: 1,
+   194→      precio: p.precio,
+   195→      precioOriginal: p.precio,
+   196→      moneda: p.monedaPrecio,
+   197→      operarioId: null,
+   198→      stock: stockDisponible,
+   199→    })
+   200→  }
+   201→
+   202→  function alEscanear(e: React.KeyboardEvent) {
+   203→    if (e.key !== 'Enter') return
+   204→    const codigo = codigoBarras.trim()
+   205→    if (!codigo) return
+   206→    const p = productos.find((x) => x.codigoBarras === codigo || x.codigoInterno === codigo)
+   207→    if (p) {
+   208→      agregarProducto(p)
+   209→      setCodigoBarras('')
+   210→      toast.success(`${p.nombre} agregado`)
+   211→    } else {
+   212→      setBusqueda(codigo)
+   213→      toast.info('Código no encontrado: buscando por texto')
+   214→      setCodigoBarras('')
+   215→    }
+   216→  }
+   217→
+   218→  async function guardarTasas() {
+   219→    const usd = parseFloat(tasasEdit.USD)
+   220→    const eur = parseFloat(tasasEdit.EUR)
+   221→    if (!isFinite(usd) || usd <= 0 || !isFinite(eur) || eur <= 0) {
+   222→      toast.error('Tasas inválidas')
+   223→      return
+   224→    }
+   225→    try {
+   226→      if (usd !== tasas.USD) await api.post('/api/tasas', { moneda: 'USD', valorCUP: usd })
+   227→      if (eur !== tasas.EUR) await api.post('/api/tasas', { moneda: 'EUR', valorCUP: eur })
+   228→      setTasas({ USD: usd, EUR: eur })
+   229→      toast.success('Tasas actualizadas')
+   230→    } catch (e) {
+   231→      toast.error(e instanceof Error ? e.message : 'Error al actualizar tasas')
+   232→    }
+   233→  }
+   234→
+   235→  function agregarPago() {
+   236→    if (!carrito) return
+   237→    const falt = Math.max(0, faltante)
+   238→    const defecto: Pago =
+   239→      falt > 0
+   240→        ? { metodo: 'EFECTIVO', moneda: 'CUP', monto: String(falt), referencia: '' }
+   241→        : { metodo: 'EFECTIVO', moneda: 'CUP', monto: '', referencia: '' }
+   242→    setPagos((p) => ({ ...p, [carrito.id]: [...(p[carrito.id] ?? []), defecto] }))
+   243→  }
+   244→
+   245→  function actualizarPago(i: number, cambios: Partial<Pago>) {
+   246→    if (!carrito) return
+   247→    setPagos((p) => ({
+   248→      ...p,
+   249→      [carrito.id]: (p[carrito.id] ?? []).map((pg, idx) => (idx === i ? { ...pg, ...cambios } : pg)),
+   250→    }))
+   251→  }
+   252→
+   253→  function quitarPago(i: number) {
+   254→    if (!carrito) return
+   255→    setPagos((p) => ({ ...p, [carrito.id]: (p[carrito.id] ?? []).filter((_, idx) => idx !== i) }))
+   256→  }
+   257→
+   258→  async function buscarClientes(q: string) {
+   259→    const res = await api.get<{ clientes: Cliente[] }>(`/api/clientes?q=${encodeURIComponent(q)}`)
+   260→    setResultadosCliente(res.clientes)
+   261→  }
+   262→
+   263→  async function crearCliente() {
+   264→    if (nuevoCliente.nombre.trim().length < 2) {
+   265→      toast.error('Nombre del cliente muy corto')
+   266→      return
+   267→    }
+   268→    try {
+   269→      const res = await api.post<{ cliente: Cliente }>('/api/clientes', {
+   270→        nombre: nuevoCliente.nombre.trim(),
+   271→        telefono: nuevoCliente.telefono || null,
+   272→        ci: nuevoCliente.ci || null,
+   273→      })
+   274→      if (carrito) setCliente(carrito.id, { id: res.cliente.id, nombre: res.cliente.nombre })
+   275→      setModalCliente(false)
+   276→      setNuevoCliente({ nombre: '', telefono: '', ci: '' })
+   277→      toast.success('Cliente creado y asignado')
+   278→    } catch (e) {
+   279→      toast.error(e instanceof Error ? e.message : 'Error al crear cliente')
+   280→    }
+   281→  }
+   282→
+   283→  async function confirmarVenta() {
+   284→    if (!carrito || !tallerId) return
+   285→    if (carrito.items.length === 0) return toast.error('El carrito está vacío')
+   286→    if (itemsInvalidos.length > 0) {
+   287→      return toast.error('Hay líneas inválidas: servicios sin operario o cantidad mayor que el stock')
+   288→    }
+   289→    const pagosValidos = pagosActivos.filter((p) => parseFloat(p.monto) > 0)
+   290→    if (pagosValidos.length === 0) return toast.error('Registre al menos un pago')
+   291→    for (const p of pagosValidos) {
+   292→      if (p.metodo === 'ZELLE' && (p.moneda !== 'USD' || !p.referencia.trim())) {
+   293→        return toast.error('Zelle solo en USD y con referencia obligatoria')
+   294→      }
+   295→    }
+   296→    if (cubierto + 0.001 < totales.cup) {
+   297→      return toast.error(`Faltan ${fmtCUP(faltante)} por cubrir`)
+   298→    }
+   299→    setConfirmando(true)
+   300→    try {
+   301→      const res = await api.post<{ venta: { id: string; codigo: string } }>('/api/ventas', {
+   302→        tallerId,
+   303→        clienteId: carrito.clienteId,
+   304→        items: carrito.items.map((it) => ({
+   305→          productoId: it.productoId,
+   306→          cantidad: it.cantidad,
+   307→          precioUnitario: it.precio !== it.precioOriginal ? it.precio : undefined,
+   308→          operarioId: it.operarioId,
+   309→        })),
+   310→        pagos: pagosValidos.map((p) => ({
+   311→          metodo: p.metodo,
+   312→          moneda: p.moneda,
+   313→          monto: parseFloat(p.monto),
+   314→          referencia: p.metodo === 'ZELLE' ? p.referencia.trim() : p.referencia || undefined,
+   315→        })),
+   316→      })
+   317→      const detalle = await api.get<VentaDetalle>(`/api/ventas?id=${res.venta.id}`)
+   318→      setTicketData(detalle)
+   319→      toast.success(`Venta ${res.venta.codigo} registrada`)
+   320→      cerrarCarrito(carrito.id)
+   321→      setPagos((p) => {
+   322→        const copia = { ...p }
+   323→        delete copia[carrito.id]
+   324→        return copia
+   325→      })
+   326→      nuevoCarrito(tallerId)
+   327→      await cargarProductos()
+   328→    } catch (e) {
+   329→      toast.error(e instanceof Error ? e.message : 'Error al registrar la venta')
+   330→    } finally {
+   331→      setConfirmando(false)
+   332→    }
+   333→  }
+   334→
+   335→  function imprimir() {
+   336→    window.print()
+   337→  }
+   338→
+   339→  if (!tallerId || !taller) {
+   340→    return <p className="text-muted-foreground">No hay taller disponible para vender.</p>
+   341→  }
+   342→
+   343→  return (
+   344→    <div className="grid lg:grid-cols-[1fr_420px] xl:grid-cols-[1fr_460px] gap-4 items-start">
+   345→      {/* ==================== IZQUIERDA: PRODUCTOS ==================== */}
+   346→      <div className="space-y-3 min-w-0">
+   347→        <Card>
+   348→          <CardContent className="p-3 space-y-2">
+   349→            <div className="flex gap-2">
+   350→              <div className="relative flex-1">
+   351→                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" aria-hidden />
+   352→                <Input
+   353→                  value={busqueda}
+   354→                  onChange={(e) => setBusqueda(e.target.value)}
+   355→                  placeholder="Buscar producto por nombre, categoría o código…"
+   356→                  className="pl-8"
+   357→                  aria-label="Buscar producto"
+   358→                />
+   359→              </div>
+   360→              <div className="relative w-40 sm:w-48">
+   361→                <Input
+   362→                  ref={codigoRef}
+   363→                  value={codigoBarras}
+   364→                  onChange={(e) => setCodigoBarras(e.target.value)}
+   365→                  onKeyDown={alEscanear}
+   366→                  placeholder="Código de barras ↵"
+   367→                  aria-label="Código de barras (lector)"
+   368→                  className="font-mono"
+   369→                />
+   370→              </div>
+   371→            </div>
+   372→            <div className="flex flex-wrap items-center gap-2 text-sm">
+   373→              <span className="text-muted-foreground">Tasas (USD/EUR → CUP):</span>
+   374→              <Input
+   375→                className="w-24 h-8"
+   376→                value={tasasEdit.USD}
+   377→                onChange={(e) => setTasasEdit((t) => ({ ...t, USD: e.target.value }))}
+   378→                aria-label="Tasa USD"
+   379→              />
+   380→              <Input
+   381→                className="w-24 h-8"
+   382→                value={tasasEdit.EUR}
+   383→                onChange={(e) => setTasasEdit((t) => ({ ...t, EUR: e.target.value }))}
+   384→                aria-label="Tasa EUR"
+   385→              />
+   386→              <Button size="sm" variant="outline" onClick={guardarTasas}>
+   387→                Actualizar tasas
+   388→              </Button>
+   389→            </div>
+   390→          </CardContent>
+   391→        </Card>
+   392→
+   393→        <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-2 max-h-[calc(100vh-300px)] overflow-y-auto pr-1">
+   394→          {productosFiltrados.map((p) => {
+   395→            const precioCUP = aCUP(p.precio, p.monedaPrecio, tasas)
+   396→            const sinStock = !esServicio(p.tipo) && p.cantidad <= 0
+   397→            return (
+   398→              <button
+   399→                key={p.id}
+   400→                onClick={() => agregarProducto(p)}
+   401→                disabled={sinStock}
+   402→                className="text-left rounded-xl border bg-white p-3 hover:border-primary hover:shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-ring"
+   403→              >
+   404→                <div className="flex items-start justify-between gap-2">
+   405→                  <span className="font-medium text-sm leading-tight line-clamp-2">{p.nombre}</span>
+   406→                  {esServicio(p.tipo) ? (
+   407→                    <Wrench className="h-4 w-4 text-amber-600 shrink-0" aria-label="Servicio" />
+   408→                  ) : (
+   409→                    <Package className="h-4 w-4 text-zinc-400 shrink-0" aria-hidden />
+   410→                  )}
+   411→                </div>
+   412→                <div className="mt-1 flex items-center justify-between gap-2">
+   413→                  <span className="text-xs text-muted-foreground truncate">{p.categoria}</span>
+   414→                  {!esServicio(p.tipo) && (
+   415→                    <Badge variant={p.cantidad > 0 ? 'secondary' : 'destructive'} className="text-[10px]">
+   416→                      stock {p.cantidad}
+   417→                    </Badge>
+   418→                  )}
+   419→                </div>
+   420→                <div className="mt-1.5 font-bold text-primary">
+   421→                  {fmt(p.precio)} {p.monedaPrecio}
+   422→                  {p.monedaPrecio !== 'CUP' && (
+   423→                    <span className="ml-1 text-xs font-normal text-muted-foreground">≈ {fmt(precioCUP)} CUP</span>
+   424→                  )}
+   425→                </div>
+   426→              </button>
+   427→            )
+   428→          })}
+   429→          {productosFiltrados.length === 0 && (
+   430→            <p className="col-span-full text-sm text-muted-foreground py-8 text-center">
+   431→              No se encontraron productos{busqueda ? ' para esa búsqueda' : ' en este taller'}.
+   432→            </p>
+   433→          )}
+   434→        </div>
+   435→      </div>
+   436→
+   437→      {/* ==================== DERECHA: CARRITO ==================== */}
+   438→      <Card className="lg:sticky lg:top-32">
+   439→        <CardHeader className="p-3 pb-0 space-y-2">
+   440→          <div className="flex items-center justify-between gap-2 flex-wrap">
+   441→            <CardTitle className="text-base">Carrito</CardTitle>
+   442→            <div className="flex gap-1 flex-wrap">
+   443→              {carritosTaller.map((c) => (
+   444→                <button
+   445→                  key={c.id}
+   446→                  onClick={() => setCarritoActivo(c.id)}
+   447→                  className={`px-2.5 h-7 rounded-md text-xs font-medium border transition-colors ${
+   448→                    carrito?.id === c.id
+   449→                      ? 'bg-primary text-primary-foreground border-primary'
+   450→                      : 'bg-white hover:bg-zinc-50'
+   451→                  }`}
+   452→                >
+   453→                  {c.nombre} {c.items.length > 0 && `(${c.items.length})`}
+   454→                </button>
+   455→              ))}
+   456→              <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => nuevoCarrito(tallerId)} aria-label="Nuevo carrito">
+   457→                <Plus className="h-3.5 w-3.5" />
+   458→              </Button>
+   459→            </div>
+   460→          </div>
+   461→          {/* Cliente */}
+   462→          <div className="flex items-center gap-2">
+   463→            {carrito?.clienteId ? (
+   464→              <>
+   465→                <User className="h-4 w-4 text-primary shrink-0" aria-hidden />
+   466→                <span className="text-sm truncate flex-1">{carrito.clienteNombre}</span>
+   467→                <Button
+   468→                  size="sm"
+   469→                  variant="ghost"
+   470→                  className="h-7 px-2"
+   471→                  onClick={() => carrito && setCliente(carrito.id, null)}
+   472→                  aria-label="Quitar cliente"
+   473→                >
+   474→                  <X className="h-3.5 w-3.5" />
+   475→                </Button>
+   476→              </>
+   477→            ) : (
+   478→              <>
+   479→                <span className="text-sm text-muted-foreground flex-1">Consumidor final</span>
+   480→                <Button size="sm" variant="outline" onClick={() => setModalCliente(true)}>
+   481→                  <UserPlus className="h-3.5 w-3.5 mr-1" /> Cliente
+   482→                </Button>
+   483→              </>
+   484→            )}
+   485→          </div>
+   486→        </CardHeader>
+   487→        <CardContent className="p-3 space-y-3">
+   488→          {/* Líneas */}
+   489→          <div className="max-h-[38vh] overflow-y-auto space-y-2 pr-1">
+   490→            {carrito?.items.map((it) => {
+   491→              const subtotal = aCUP(it.precio, it.moneda, tasas) * it.cantidad
+   492→              const faltaOperario = esServicio(it.tipo) && !it.operarioId
+   493→              return (
+   494→                <div
+   495→                  key={it.productoId}
+   496→                  className={`rounded-lg border p-2 space-y-1.5 ${faltaOperario ? 'border-destructive' : 'bg-zinc-50/60'}`}
+   497→                >
+   498→                  <div className="flex items-start justify-between gap-2">
+   499→                    <span className="text-sm font-medium leading-tight">{it.nombre}</span>
+   500→                    <Button
+   501→                      variant="ghost"
+   502→                      className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+   503→                      onClick={() => carrito && quitarItem(carrito.id, it.productoId)}
+   504→                      aria-label={`Quitar ${it.nombre}`}
+   505→                    >
+   506→                      <Trash2 className="h-3.5 w-3.5" />
+   507→                    </Button>
+   508→                  </div>
+   509→                  <div className="flex items-center gap-1.5 flex-wrap">
+   510→                    {!esServicio(it.tipo) ? (
+   511→                      <div className="flex items-center border rounded-md h-8 bg-white">
+   512→                        <Button
+   513→                          variant="ghost"
+   514→                          className="h-8 w-8 p-0"
+   515→                          onClick={() => carrito && cambiarCantidad(carrito.id, it.productoId, it.cantidad - 1)}
+   516→                          aria-label="Restar"
+   517→                        >
+   518→                          <Minus className="h-3 w-3" />
+   519→                        </Button>
+   520→                        <span className="w-8 text-center text-sm">{it.cantidad}</span>
+   521→                        <Button
+   522→                          variant="ghost"
+   523→                          className="h-8 w-8 p-0"
+   524→                          disabled={it.cantidad >= it.stock}
+   525→                          onClick={() => carrito && cambiarCantidad(carrito.id, it.productoId, it.cantidad + 1)}
+   526→                          aria-label="Sumar"
+   527→                        >
+   528→                          <Plus className="h-3 w-3" />
+   529→                        </Button>
+   530→                      </div>
+   531→                    ) : (
+   532→                      <Badge variant="outline" className="text-[10px]">servicio ×1</Badge>
+   533→                    )}
+   534→                    <div className="flex items-center gap-1">
+   535→                      <Input
+   536→                        className="w-24 h-8 text-sm"
+   537→                        value={it.precio}
+   538→                        inputMode="decimal"
+   539→                        onChange={(e) => {
+   540→                          const v = parseFloat(e.target.value)
+   541→                          if (isFinite(v) && v >= 0 && carrito) cambiarPrecio(carrito.id, it.productoId, v)
+   542→                        }}
+   543→                        aria-label={`Precio de ${it.nombre}`}
+   544→                      />
+   545→                      <span className="text-xs text-muted-foreground">{it.moneda}</span>
+   546→                    </div>
+   547→                    <span className="ml-auto text-sm font-semibold">{fmt(subtotal)} CUP</span>
+   548→                  </div>
+   549→                  <div className="flex items-center gap-1.5">
+   550→                    <Select
+   551→                      value={it.operarioId ?? ''}
+   552→                      onValueChange={(v) =>
+   553→                        carrito && asignarOperario(carrito.id, it.productoId, v === '__ninguno__' ? null : v)
+   554→                      }
+   555→                    >
+   556→                      <SelectTrigger
+   557→                        className={`h-8 text-xs flex-1 ${faltaOperario ? 'border-destructive text-destructive' : ''}`}
+   558→                        aria-label={`Operario de ${it.nombre}`}
+   559→                      >
+   560→                        <SelectValue placeholder={faltaOperario ? 'Operario (obligatorio)' : 'Operario…'} />
+   561→                      </SelectTrigger>
+   562→                      <SelectContent>
+   563→                        <SelectItem value="__ninguno__">— Sin operario —</SelectItem>
+   564→                        {operarios.map((o) => (
+   565→                          <SelectItem key={o.id} value={o.id}>
+   566→                            {o.nombre}
+   567→                          </SelectItem>
+   568→                        ))}
+   569→                      </SelectContent>
+   570→                    </Select>
+   571→                    {it.precio !== it.precioOriginal && (
+   572→                      <Badge
+   573→                        variant="outline"
+   574→                        className="text-[10px] text-amber-700 border-amber-300"
+   575→                        title={`Precio original: ${it.precioOriginal}`}
+   576→                      >
+   577→                        precio editado
+   578→                      </Badge>
+   579→                    )}
+   580→                  </div>
+   581→                </div>
+   582→              )
+   583→            })}
+   584→            {(!carrito || carrito.items.length === 0) && (
+   585→              <p className="text-sm text-muted-foreground text-center py-6">
+   586→                Toque un producto o escanee su código de barras.
+   587→              </p>
+   588→            )}
+   589→          </div>
+   590→
+   591→          {/* Totales */}
+   592→          <div className="rounded-lg border bg-white p-2.5 space-y-1 text-sm">
+   593→            <div className="flex justify-between">
+   594→              <span className="text-muted-foreground">Total</span>
+   595→              <span className="font-bold text-lg">{fmtCUP(totales.cup)}</span>
+   596→            </div>
+   597→            <div className="flex justify-between text-xs text-muted-foreground">
+   598→              <span>Equivalente</span>
+   599→              <span>{fmt(totales.usd)} USD</span>
+   600→            </div>
+   601→          </div>
+   602→
+   603→          {/* Pagos */}
+   604→          <div className="space-y-2">
+   605→            <div className="flex items-center justify-between">
+   606→              <span className="text-sm font-medium flex items-center gap-1">
+   607→                <CreditCard className="h-4 w-4" aria-hidden /> Pagos
+   608→              </span>
+   609→              <Button size="sm" variant="outline" onClick={agregarPago}>
+   610→                <Plus className="h-3.5 w-3.5 mr-1" /> Pago
+   611→              </Button>
+   612→            </div>
+   613→            {pagosActivos.map((p, i) => (
+   614→              <div key={i} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-1.5 items-center">
+   615→                <Select
+   616→                  value={p.metodo}
+   617→                  onValueChange={(v) => actualizarPago(i, { metodo: v, ...(v === 'ZELLE' ? { moneda: 'USD' } : {}) })}
+   618→                >
+   619→                  <SelectTrigger className="h-8 text-xs" aria-label="Método de pago">
+   620→                    <SelectValue />
+   621→                  </SelectTrigger>
+   622→                  <SelectContent>
+   623→                    {METODOS.map((m) => (
+   624→                      <SelectItem key={m} value={m}>
+   625→                        {METODO_PAGO_LABEL[m]}
+   626→                      </SelectItem>
+   627→                    ))}
+   628→                  </SelectContent>
+   629→                </Select>
+   630→                <Select value={p.moneda} onValueChange={(v) => actualizarPago(i, { moneda: v })} disabled={p.metodo === 'ZELLE'}>
+   631→                  <SelectTrigger className="h-8 text-xs" aria-label="Moneda del pago">
+   632→                    <SelectValue />
+   633→                  </SelectTrigger>
+   634→                  <SelectContent>
+   635→                    {MONEDAS.map((m) => (
+   636→                      <SelectItem key={m} value={m} disabled={p.metodo === 'ZELLE' && m !== 'USD'}>
+   637→                        {m}
+   638→                      </SelectItem>
+   639→                    ))}
+   640→                  </SelectContent>
+   641→                </Select>
+   642→                <Input
+   643→                  className="h-8 text-xs"
+   644→                  inputMode="decimal"
+   645→                  value={p.monto}
+   646→                  placeholder="Monto"
+   647→                  onChange={(e) => actualizarPago(i, { monto: e.target.value })}
+   648→                  aria-label="Monto del pago"
+   649→                />
+   650→                <Button
+   651→                  variant="ghost"
+   652→                  className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+   653→                  onClick={() => quitarPago(i)}
+   654→                  aria-label="Quitar pago"
+   655→                >
+   656→                  <Trash2 className="h-3.5 w-3.5" />
+   657→                </Button>
+   658→                {p.metodo === 'ZELLE' && (
+   659→                  <Input
+   660→                    className="h-8 text-xs col-span-4"
+   661→                    value={p.referencia}
+   662→                    placeholder="Referencia Zelle (obligatoria)"
+   663→                    onChange={(e) => actualizarPago(i, { referencia: e.target.value })}
+   664→                    aria-label="Referencia Zelle"
+   665→                  />
+   666→                )}
+   667→              </div>
+   668→            ))}
+   669→            {pagosActivos.length > 0 && (
+   670→              <div className="flex justify-between text-sm border-t pt-1.5">
+   671→                <span className="text-muted-foreground">Cubierto</span>
+   672→                <span className={faltante > 0.001 ? 'text-destructive font-semibold' : 'text-primary font-semibold'}>
+   673→                  {fmt(cubierto)} CUP {faltante > 0.001 ? `(faltan ${fmt(faltante)})` : '✓'}
+   674→                </span>
+   675→              </div>
+   676→            )}
+   677→          </div>
+   678→
+   679→          <Button
+   680→            className="w-full h-11 text-base"
+   681→            onClick={confirmarVenta}
+   682→            disabled={confirmando || !carrito || carrito.items.length === 0}
+   683→          >
+   684→            {confirmando ? 'Registrando…' : `Confirmar venta · ${fmtCUP(totales.cup)}`}
+   685→          </Button>
+   686→        </CardContent>
+   687→      </Card>
+   688→
+   689→      {/* ==================== MODAL CLIENTE ==================== */}
+   690→      <Dialog open={modalCliente} onOpenChange={setModalCliente}>
+   691→        <DialogContent className="max-w-md">
+   692→          <DialogHeader>
+   693→            <DialogTitle>Asignar cliente</DialogTitle>
+   694→          </DialogHeader>
+   695→          <div className="space-y-3">
+   696→            <div className="flex gap-2">
+   697→              <Input
+   698→                placeholder="Buscar por nombre, teléfono o CI…"
+   699→                value={busqCliente}
+   700→                onChange={(e) => setBusqCliente(e.target.value)}
+   701→                onKeyDown={(e) => e.key === 'Enter' && buscarClientes(busqCliente)}
+   702→                aria-label="Buscar cliente"
+   703→              />
+   704→              <Button variant="outline" onClick={() => buscarClientes(busqCliente)}>
+   705→                Buscar
+   706→              </Button>
+   707→            </div>
+   708→            <div className="max-h-48 overflow-y-auto rounded-lg border divide-y">
+   709→              {resultadosCliente.map((c) => (
+   710→                <button
+   711→                  key={c.id}
+   712→                  className="w-full text-left px-3 py-2 hover:bg-zinc-50 text-sm"
+   713→                  onClick={() => {
+   714→                    if (carrito) setCliente(carrito.id, { id: c.id, nombre: c.nombre })
+   715→                    setModalCliente(false)
+   716→                  }}
+   717→                >
+   718→                  <span className="font-medium">{c.nombre}</span>
+   719→                  <span className="text-muted-foreground text-xs ml-2">
+   720→                    {c.telefono ?? ''} {c.ci ? `· CI ${c.ci}` : ''}
+   721→                  </span>
+   722→                </button>
+   723→              ))}
+   724→              {resultadosCliente.length === 0 && (
+   725→                <p className="px-3 py-4 text-sm text-muted-foreground text-center">
+   726→                  Sin resultados. Puede crear el cliente abajo (los homónimos están permitidos).
+   727→                </p>
+   728→              )}
+   729→            </div>
+   730→            <div className="border-t pt-3 space-y-2">
+   731→              <p className="text-sm font-medium">Crear nuevo cliente</p>
+   732→              <div className="grid grid-cols-2 gap-2">
+   733→                <div className="col-span-2">
+   734→                  <Label htmlFor="cli-nombre">Nombre</Label>
+   735→                  <Input
+   736→                    id="cli-nombre"
+   737→                    value={nuevoCliente.nombre}
+   738→                    onChange={(e) => setNuevoCliente((c) => ({ ...c, nombre: e.target.value }))}
+   739→                  />
+   740→                </div>
+   741→                <div>
+   742→                  <Label htmlFor="cli-tel">Teléfono</Label>
+   743→                  <Input
+   744→                    id="cli-tel"
+   745→                    value={nuevoCliente.telefono}
+   746→                    onChange={(e) => setNuevoCliente((c) => ({ ...c, telefono: e.target.value }))}
+   747→                  />
+   748→                </div>
+   749→                <div>
+   750→                  <Label htmlFor="cli-ci">CI</Label>
+   751→                  <Input id="cli-ci" value={nuevoCliente.ci} onChange={(e) => setNuevoCliente((c) => ({ ...c, ci: e.target.value }))} />
+   752→                </div>
+   753→              </div>
+   754→              <Button className="w-full" onClick={crearCliente}>
+   755→                Crear y asignar
+   756→              </Button>
+   757→            </div>
+   758→          </div>
+   759→        </DialogContent>
+   760→      </Dialog>
+   761→
+   762→      {/* ==================== MODAL TICKET ==================== */}
+   763→      <Dialog open={!!ticketData} onOpenChange={(o) => !o && setTicketData(null)}>
+   764→        <DialogContent className="max-w-fit p-0 overflow-auto bg-zinc-100 border-0">
+   765→          <DialogHeader className="sr-only">
+   766→            <DialogTitle>Ticket de venta</DialogTitle>
+   767→          </DialogHeader>
+   768→          <div className="p-4 max-h-[80vh] overflow-auto">
+   769→            {ticketData && (
+   770→              <div className="bg-white shadow-lg rounded-sm" style={{ width: `${ticketData.ajustes.ticketAncho ?? '58'}mm` }}>
+   771→                <TicketVenta
+   772→                  data={{
+   773→                    codigo: ticketData.venta.codigo,
+   774→                    fecha: ticketData.venta.fecha,
+   775→                    taller: ticketData.venta.taller,
+   776→                    cliente: ticketData.venta.cliente?.nombre ?? null,
+   777→                    vendedor: ticketData.venta.vendedor.nombre,
+   778→                    items: ticketData.venta.items.map((i) => ({
+   779→                      nombre: i.producto.nombre,
+   780→                      cantidad: i.cantidad,
+   781→                      precio: i.precioUnitario,
+   782→                      moneda: i.monedaPrecio,
+   783→                      subtotalCUP: i.subtotalCUP,
+   784→                      operario: i.operario?.nombre ?? null,
+   785→                    })),
+   786→                    totalCUP: ticketData.venta.totalCUP,
+   787→                    pagos: ticketData.venta.pagos.map((p) => ({
+   788→                      metodo: METODO_PAGO_LABEL[p.metodo] ?? p.metodo,
+   789→                      moneda: p.moneda,
+   790→                      monto: p.monto,
+   791→                      montoCUP: p.montoCUP,
+   792→                      referencia: p.referencia,
+   793→                    })),
+   794→                    encabezado: ticketData.ajustes.ticketEncabezado,
+   795→                    pie: ticketData.ajustes.ticketPie,
+   796→                    ancho: ticketData.ajustes.ticketAncho ?? '58',
+   797→                  }}
+   798→                />
+   799→              </div>
+   800→            )}
+   801→          </div>
+   802→          <div className="flex gap-2 justify-center p-3 bg-white border-t">
+   803→            <Button onClick={imprimir}>
+   804→              <Printer className="h-4 w-4 mr-2" /> Imprimir ticket
+   805→            </Button>
+   806→            <Button variant="outline" onClick={() => setTicketData(null)}>
+   807→              Cerrar
+   808→            </Button>
+   809→          </div>
+   810→        </DialogContent>
+   811→      </Dialog>
+   812→    </div>
+   813→  )
+   814→}
+   815→

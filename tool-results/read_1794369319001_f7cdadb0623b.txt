@@ -1,0 +1,783 @@
+     1→'use client'
+     2→import { useCallback, useEffect, useState } from 'react'
+     3→import { Button } from '@/components/ui/button'
+     4→import { Input } from '@/components/ui/input'
+     5→import { Label } from '@/components/ui/label'
+     6→import { Badge } from '@/components/ui/badge'
+     7→import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+     8→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+     9→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+    10→import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+    11→import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+    12→import { Switch } from '@/components/ui/switch'
+    13→import { toast } from 'sonner'
+    14→import { Plus, Pencil, KeyRound, Download, Save } from 'lucide-react'
+    15→import { api, descargar } from '@/lib/api-client'
+    16→import { useApp } from '@/lib/store'
+    17→import { fmt, fmtFechaHora, ROL_LABEL, RAMA_LABEL } from '@/lib/formato'
+    18→import { useGuardarConCtrlS } from '@/hooks/use-ctrl-s'
+    19→import { Kbd } from '../kbd'
+    20→
+    21→interface Taller { id: string; nombre: string; direccion: string; telefono: string; activo: boolean }
+    22→interface Usuario {
+    23→  id: string
+    24→  nombre: string
+    25→  username: string
+    26→  rol: string
+    27→  tallerId: string | null
+    28→  operarioId: string | null
+    29→  activo: boolean
+    30→}
+    31→interface Operario {
+    32→  id: string
+    33→  nombre: string
+    34→  rama: string
+    35→  activo: boolean
+    36→  talleres: Array<{ tallerId: string }>
+    37→}
+    38→interface Tasa { id: string; moneda: string; valorCUP: number; fechaVigencia: string; usuario: { username: string } | null }
+    39→
+    40→const ROLES = ['ADMIN', 'VENDEDOR', 'VENDEDOR_ONLINE']
+    41→const RAMAS = ['VENDEDOR', 'INFORMATICO', 'ELECTRONICO', 'ADMIN']
+    42→
+    43→export function Configuracion() {
+    44→  const setAjustesGlobal = useApp((s) => s.setAjustes)
+    45→  const ajustesGlobal = useApp((s) => s.ajustes)
+    46→
+    47→  const [tab, setTab] = useState('talleres')
+    48→  const [talleres, setTalleres] = useState<Taller[]>([])
+    49→  const [usuarios, setUsuarios] = useState<Usuario[]>([])
+    50→  const [operarios, setOperarios] = useState<Operario[]>([])
+    51→  const [tasas, setTasas] = useState<Tasa[]>([])
+    52→  const [tasasVigentes, setTasasVigentes] = useState({ USD: 0, EUR: 0 })
+    53→  const [formAjustes, setFormAjustes] = useState({
+    54→    ticketAncho: ajustesGlobal.ticketAncho ?? '58',
+    55→    ticketEncabezado: ajustesGlobal.ticketEncabezado ?? '',
+    56→    ticketPie: ajustesGlobal.ticketPie ?? '',
+    57→    porcentajeAdmin: ajustesGlobal.porcentajeAdmin ?? '0',
+    58→  })
+    59→
+    60→  const [modalTaller, setModalTaller] = useState(false)
+    61→  const [tallerEdit, setTallerEdit] = useState<{ id: string | null; datos: { nombre: string; direccion: string; telefono: string; activo: boolean } }>({ id: null, datos: { nombre: '', direccion: '', telefono: '', activo: true } })
+    62→
+    63→  const [modalUsuario, setModalUsuario] = useState(false)
+    64→  const [usuarioEdit, setUsuarioEdit] = useState<{
+    65→    id: string | null
+    66→    datos: { nombre: string; username: string; password: string; rol: string; tallerId: string; operarioId: string; activo: boolean }
+    67→  }>({ id: null, datos: { nombre: '', username: '', password: '', rol: 'VENDEDOR', tallerId: '', operarioId: '', activo: true } })
+    68→
+    69→  const [modalOperario, setModalOperario] = useState(false)
+    70→  const [operarioEdit, setOperarioEdit] = useState<{ id: string | null; datos: { nombre: string; rama: string; activo: boolean; tallerIds: string[] } }>({ id: null, datos: { nombre: '', rama: 'VENDEDOR', activo: true, tallerIds: [] } })
+    71→
+    72→  const [formTasas, setFormTasas] = useState({ USD: '', EUR: '' })
+    73→  const [modalPassword, setModalPassword] = useState(false)
+    74→  const [formPassword, setFormPassword] = useState({ usuarioId: '', username: '', password: '' })
+    75→
+    76→  const cargarTodo = useCallback(async () => {
+    77→    try {
+    78→      const [rTalleres, rUsuarios, rOperarios, rTasas] = await Promise.all([
+    79→        api.get<{ talleres: Taller[] }>('/api/talleres'),
+    80→        api.get<{ usuarios: Usuario[] }>('/api/usuarios'),
+    81→        api.get<{ operarios: Operario[] }>('/api/operarios'),
+    82→        api.get<{ tasas: { USD: number; EUR: number }; historial: Tasa[] }>('/api/tasas'),
+    83→      ])
+    84→      setTalleres(rTalleres.talleres)
+    85→      setUsuarios(rUsuarios.usuarios)
+    86→      setOperarios(rOperarios.operarios)
+    87→      setTasas(rTasas.historial)
+    88→      setTasasVigentes(rTasas.tasas)
+    89→      setFormTasas({ USD: String(rTasas.tasas.USD), EUR: String(rTasas.tasas.EUR) })
+    90→    } catch (e) {
+    91→      toast.error(e instanceof Error ? e.message : 'Error al cargar configuración')
+    92→    }
+    93→  }, [])
+    94→
+    95→  useEffect(() => {
+    96→    ;(async () => {
+    97→      await cargarTodo()
+    98→    })()
+    99→  }, [cargarTodo])
+   100→
+   101→  // ---------- Talleres ----------
+   102→  async function guardarTaller() {
+   103→    const d = tallerEdit.datos
+   104→    if (d.nombre.trim().length < 2) return toast.error('Nombre muy corto')
+   105→    try {
+   106→      if (tallerEdit.id) {
+   107→        await api.patch(`/api/talleres?id=${tallerEdit.id}`, d)
+   108→        toast.success('Taller actualizado')
+   109→      } else {
+   110→        await api.post('/api/talleres', d)
+   111→        toast.success('Taller creado')
+   112→      }
+   113→      setModalTaller(false)
+   114→      cargarTodo()
+   115→    } catch (e) {
+   116→      toast.error(e instanceof Error ? e.message : 'Error')
+   117→    }
+   118→  }
+   119→
+   120→  // ---------- Usuarios ----------
+   121→  async function guardarUsuario() {
+   122→    const d = usuarioEdit.datos
+   123→    if (d.nombre.trim().length < 2 || d.username.trim().length < 3) return toast.error('Complete nombre y usuario')
+   124→    if (!usuarioEdit.id && d.password.length < 6) return toast.error('Contraseña: mínimo 6 caracteres')
+   125→    if (d.rol === 'VENDEDOR' && !d.tallerId) return toast.error('Un VENDEDOR necesita taller asignado')
+   126→    if (d.rol === 'VENDEDOR' && !d.operarioId) return toast.error('Un VENDEDOR debe estar vinculado a un operario')
+   127→    try {
+   128→      const cuerpo: Record<string, unknown> = {
+   129→        nombre: d.nombre.trim(),
+   130→        username: d.username.trim(),
+   131→        rol: d.rol,
+   132→        tallerId: d.rol === 'VENDEDOR' ? d.tallerId : null,
+   133→        operarioId: d.operarioId || null,
+   134→        activo: d.activo,
+   135→      }
+   136→      if (usuarioEdit.id) {
+   137→        if (d.password) cuerpo.password = d.password
+   138→        await api.patch(`/api/usuarios?id=${usuarioEdit.id}`, cuerpo)
+   139→        toast.success('Usuario actualizado')
+   140→      } else {
+   141→        cuerpo.password = d.password
+   142→        await api.post('/api/usuarios', cuerpo)
+   143→        toast.success('Usuario creado')
+   144→      }
+   145→      setModalUsuario(false)
+   146→      cargarTodo()
+   147→    } catch (e) {
+   148→      toast.error(e instanceof Error ? e.message : 'Error')
+   149→    }
+   150→  }
+   151→
+   152→  function abrirResetPassword(u: Usuario) {
+   153→    setFormPassword({ usuarioId: u.id, username: u.username, password: '' })
+   154→    setModalPassword(true)
+   155→  }
+   156→
+   157→  async function confirmarResetPassword() {
+   158→    if (formPassword.password.length < 6) return toast.error('Mínimo 6 caracteres')
+   159→    try {
+   160→      await api.post('/api/auth/cambiar-password', { usuarioId: formPassword.usuarioId, passwordNueva: formPassword.password })
+   161→      toast.success('Contraseña actualizada')
+   162→      setModalPassword(false)
+   163→      setFormPassword({ usuarioId: '', username: '', password: '' })
+   164→    } catch (e) {
+   165→      toast.error(e instanceof Error ? e.message : 'Error')
+   166→    }
+   167→  }
+   168→
+   169→  // ---------- Operarios ----------
+   170→  async function guardarOperario() {
+   171→    const d = operarioEdit.datos
+   172→    if (d.nombre.trim().length < 2) return toast.error('Nombre muy corto')
+   173→    try {
+   174→      const cuerpo = { nombre: d.nombre.trim(), rama: d.rama, activo: d.activo, tallerIds: d.tallerIds }
+   175→      if (operarioEdit.id) {
+   176→        await api.patch(`/api/operarios?id=${operarioEdit.id}`, cuerpo)
+   177→        toast.success('Operario actualizado')
+   178→      } else {
+   179→        await api.post('/api/operarios', cuerpo)
+   180→        toast.success('Operario creado')
+   181→      }
+   182→      setModalOperario(false)
+   183→      cargarTodo()
+   184→    } catch (e) {
+   185→      toast.error(e instanceof Error ? e.message : 'Error')
+   186→    }
+   187→  }
+   188→
+   189→  // ---------- Tasas ----------
+   190→  async function actualizarTasa(moneda: 'USD' | 'EUR') {
+   191→    const v = parseFloat(formTasas[moneda])
+   192→    if (!isFinite(v) || v <= 0) return toast.error('Tasa inválida')
+   193→    try {
+   194→      await api.post('/api/tasas', { moneda, valorCUP: v })
+   195→      toast.success(`Tasa ${moneda} actualizada`)
+   196→      cargarTodo()
+   197→    } catch (e) {
+   198→      toast.error(e instanceof Error ? e.message : 'Error')
+   199→    }
+   200→  }
+   201→
+   202→  // ---------- Ajustes ----------
+   203→  async function guardarAjustes() {
+   204→    try {
+   205→      await api.patch('/api/ajustes', {
+   206→        ticketAncho: formAjustes.ticketAncho as '58' | '80',
+   207→        ticketEncabezado: formAjustes.ticketEncabezado,
+   208→        ticketPie: formAjustes.ticketPie,
+   209→        porcentajeAdmin: parseFloat(formAjustes.porcentajeAdmin || '0'),
+   210→      })
+   211→      const r = await api.get<{ ajustes: Record<string, string> }>('/api/ajustes')
+   212→      setAjustesGlobal(r.ajustes)
+   213→      toast.success('Ajustes guardados')
+   214→    } catch (e) {
+   215→      toast.error(e instanceof Error ? e.message : 'Error')
+   216→    }
+   217→  }
+   218→
+   219→  // Ctrl+S guarda el formulario/modal abierto (o la pestaña de ajustes)
+   220→  useGuardarConCtrlS(
+   221→    () => {
+   222→      if (modalTaller) guardarTaller()
+   223→      else if (modalUsuario) guardarUsuario()
+   224→      else if (modalOperario) guardarOperario()
+   225→      else if (modalPassword) confirmarResetPassword()
+   226→      else if (tab === 'ajustes') guardarAjustes()
+   227→    },
+   228→    modalTaller || modalUsuario || modalOperario || modalPassword || tab === 'ajustes'
+   229→  )
+   230→
+   231→  return (
+   232→    <div className="space-y-4">
+   233→      <div className="flex items-center justify-between flex-wrap gap-2">
+   234→        <h1 className="text-xl font-bold">Configuración</h1>
+   235→        <Button
+   236→          variant="outline"
+   237→          onClick={() => descargar('/api/backup', `te-reparo-backup-${new Date().toISOString().slice(0, 10)}.json`).catch((e) => toast.error(e.message))}
+   238→        >
+   239→          <Download className="h-4 w-4 mr-1" /> Exportar respaldo (JSON)
+   240→        </Button>
+   241→      </div>
+   242→
+   243→      <Tabs value={tab} onValueChange={setTab}>
+   244→        <TabsList className="flex-wrap h-auto">
+   245→          <TabsTrigger value="talleres">Talleres</TabsTrigger>
+   246→          <TabsTrigger value="usuarios">Usuarios</TabsTrigger>
+   247→          <TabsTrigger value="operarios">Operarios</TabsTrigger>
+   248→          <TabsTrigger value="tasas">Tasas de cambio</TabsTrigger>
+   249→          <TabsTrigger value="ajustes">Ticket y ajustes</TabsTrigger>
+   250→        </TabsList>
+   251→
+   252→        {/* ============ TALLERES ============ */}
+   253→        <TabsContent value="talleres" className="space-y-3">
+   254→          <div className="flex justify-end">
+   255→            <Button
+   256→              size="sm"
+   257→              onClick={() => {
+   258→                setTallerEdit({ id: null, datos: { nombre: '', direccion: '', telefono: '', activo: true } })
+   259→                setModalTaller(true)
+   260→              }}
+   261→            >
+   262→              <Plus className="h-4 w-4 mr-1" /> Nuevo taller
+   263→            </Button>
+   264→          </div>
+   265→          <Card>
+   266→            <CardContent className="p-0 overflow-x-auto">
+   267→              <Table>
+   268→                <TableHeader>
+   269→                  <TableRow>
+   270→                    <TableHead>Nombre</TableHead>
+   271→                    <TableHead>Dirección</TableHead>
+   272→                    <TableHead>Teléfono</TableHead>
+   273→                    <TableHead>Estado</TableHead>
+   274→                    <TableHead className="text-right">Acciones</TableHead>
+   275→                  </TableRow>
+   276→                </TableHeader>
+   277→                <TableBody>
+   278→                  {talleres.map((t) => (
+   279→                    <TableRow key={t.id}>
+   280→                      <TableCell className="font-medium">{t.nombre}</TableCell>
+   281→                      <TableCell className="text-sm">{t.direccion || '—'}</TableCell>
+   282→                      <TableCell className="text-sm">{t.telefono || '—'}</TableCell>
+   283→                      <TableCell>
+   284→                        <Badge variant={t.activo ? 'default' : 'destructive'} className="text-xs">
+   285→                          {t.activo ? 'Activo' : 'Inactivo'}
+   286→                        </Badge>
+   287→                      </TableCell>
+   288→                      <TableCell className="text-right">
+   289→                        <Button
+   290→                          size="sm"
+   291→                          variant="ghost"
+   292→                          onClick={() => {
+   293→                            setTallerEdit({
+   294→                              id: t.id,
+   295→                              datos: { nombre: t.nombre, direccion: t.direccion, telefono: t.telefono, activo: t.activo },
+   296→                            })
+   297→                            setModalTaller(true)
+   298→                          }}
+   299→                          aria-label={`Editar ${t.nombre}`}
+   300→                        >
+   301→                          <Pencil className="h-4 w-4" />
+   302→                        </Button>
+   303→                      </TableCell>
+   304→                    </TableRow>
+   305→                  ))}
+   306→                </TableBody>
+   307→              </Table>
+   308→            </CardContent>
+   309→          </Card>
+   310→        </TabsContent>
+   311→
+   312→        {/* ============ USUARIOS ============ */}
+   313→        <TabsContent value="usuarios" className="space-y-3">
+   314→          <div className="flex justify-end">
+   315→            <Button
+   316→              size="sm"
+   317→              onClick={() => {
+   318→                setUsuarioEdit({
+   319→                  id: null,
+   320→                  datos: { nombre: '', username: '', password: '', rol: 'VENDEDOR', tallerId: talleres[0]?.id ?? '', operarioId: '', activo: true },
+   321→                })
+   322→                setModalUsuario(true)
+   323→              }}
+   324→            >
+   325→              <Plus className="h-4 w-4 mr-1" /> Nuevo usuario
+   326→            </Button>
+   327→          </div>
+   328→          <Card>
+   329→            <CardContent className="p-0 overflow-x-auto">
+   330→              <Table>
+   331→                <TableHeader>
+   332→                  <TableRow>
+   333→                    <TableHead>Usuario</TableHead>
+   334→                    <TableHead>Nombre</TableHead>
+   335→                    <TableHead>Rol</TableHead>
+   336→                    <TableHead>Taller</TableHead>
+   337→                    <TableHead>Estado</TableHead>
+   338→                    <TableHead className="text-right">Acciones</TableHead>
+   339→                  </TableRow>
+   340→                </TableHeader>
+   341→                <TableBody>
+   342→                  {usuarios.map((u) => (
+   343→                    <TableRow key={u.id}>
+   344→                      <TableCell className="font-mono font-medium">{u.username}</TableCell>
+   345→                      <TableCell>{u.nombre}</TableCell>
+   346→                      <TableCell>
+   347→                        <Badge variant="outline" className="text-xs">{ROL_LABEL[u.rol] ?? u.rol}</Badge>
+   348→                      </TableCell>
+   349→                      <TableCell className="text-sm">{talleres.find((t) => t.id === u.tallerId)?.nombre ?? '—'}</TableCell>
+   350→                      <TableCell>
+   351→                        <Badge variant={u.activo ? 'default' : 'destructive'} className="text-xs">
+   352→                          {u.activo ? 'Activo' : 'Inactivo'}
+   353→                        </Badge>
+   354→                      </TableCell>
+   355→                      <TableCell className="text-right">
+   356→                        <div className="flex justify-end gap-1">
+   357→                          <Button size="sm" variant="ghost" title="Restablecer contraseña (solo ADMIN)" onClick={() => abrirResetPassword(u)} aria-label={`Contraseña de ${u.username}`}>
+   358→                            <KeyRound className="h-4 w-4" />
+   359→                          </Button>
+   360→                          <Button
+   361→                            size="sm"
+   362→                            variant="ghost"
+   363→                            onClick={() => {
+   364→                              setUsuarioEdit({
+   365→                                id: u.id,
+   366→                                datos: {
+   367→                                  nombre: u.nombre,
+   368→                                  username: u.username,
+   369→                                  password: '',
+   370→                                  rol: u.rol,
+   371→                                  tallerId: u.tallerId ?? '',
+   372→                                  operarioId: u.operarioId ?? '',
+   373→                                  activo: u.activo,
+   374→                                },
+   375→                              })
+   376→                              setModalUsuario(true)
+   377→                            }}
+   378→                            aria-label={`Editar ${u.username}`}
+   379→                          >
+   380→                            <Pencil className="h-4 w-4" />
+   381→                          </Button>
+   382→                        </div>
+   383→                      </TableCell>
+   384→                    </TableRow>
+   385→                  ))}
+   386→                </TableBody>
+   387→              </Table>
+   388→            </CardContent>
+   389→          </Card>
+   390→        </TabsContent>
+   391→
+   392→        {/* ============ OPERARIOS ============ */}
+   393→        <TabsContent value="operarios" className="space-y-3">
+   394→          <div className="flex justify-end">
+   395→            <Button
+   396→              size="sm"
+   397→              onClick={() => {
+   398→                setOperarioEdit({ id: null, datos: { nombre: '', rama: 'VENDEDOR', activo: true, tallerIds: [] } })
+   399→                setModalOperario(true)
+   400→              }}
+   401→            >
+   402→              <Plus className="h-4 w-4 mr-1" /> Nuevo operario
+   403→            </Button>
+   404→          </div>
+   405→          <Card>
+   406→            <CardContent className="p-0 overflow-x-auto">
+   407→              <Table>
+   408→                <TableHeader>
+   409→                  <TableRow>
+   410→                    <TableHead>Nombre</TableHead>
+   411→                    <TableHead>Rama</TableHead>
+   412→                    <TableHead>Talleres asignados</TableHead>
+   413→                    <TableHead>Estado</TableHead>
+   414→                    <TableHead className="text-right">Acciones</TableHead>
+   415→                  </TableRow>
+   416→                </TableHeader>
+   417→                <TableBody>
+   418→                  {operarios.map((o) => (
+   419→                    <TableRow key={o.id}>
+   420→                      <TableCell className="font-medium">{o.nombre}</TableCell>
+   421→                      <TableCell>
+   422→                        <Badge variant="outline" className="text-xs">{RAMA_LABEL[o.rama] ?? o.rama}</Badge>
+   423→                      </TableCell>
+   424→                      <TableCell className="text-sm">
+   425→                        {o.talleres.map((t) => talleres.find((x) => x.id === t.tallerId)?.nombre ?? t.tallerId).join(', ') || '—'}
+   426→                      </TableCell>
+   427→                      <TableCell>
+   428→                        <Badge variant={o.activo ? 'default' : 'destructive'} className="text-xs">
+   429→                          {o.activo ? 'Activo' : 'Inactivo'}
+   430→                        </Badge>
+   431→                      </TableCell>
+   432→                      <TableCell className="text-right">
+   433→                        <Button
+   434→                          size="sm"
+   435→                          variant="ghost"
+   436→                          onClick={() => {
+   437→                            setOperarioEdit({
+   438→                              id: o.id,
+   439→                              datos: { nombre: o.nombre, rama: o.rama, activo: o.activo, tallerIds: o.talleres.map((t) => t.tallerId) },
+   440→                            })
+   441→                            setModalOperario(true)
+   442→                          }}
+   443→                          aria-label={`Editar ${o.nombre}`}
+   444→                        >
+   445→                          <Pencil className="h-4 w-4" />
+   446→                        </Button>
+   447→                      </TableCell>
+   448→                    </TableRow>
+   449→                  ))}
+   450→                </TableBody>
+   451→              </Table>
+   452→            </CardContent>
+   453→          </Card>
+   454→        </TabsContent>
+   455→
+   456→        {/* ============ TASAS ============ */}
+   457→        <TabsContent value="tasas" className="space-y-4">
+   458→          <Card>
+   459→            <CardHeader className="pb-2">
+   460→              <CardTitle className="text-base">Tasas vigentes (hacia CUP)</CardTitle>
+   461→            </CardHeader>
+   462→            <CardContent className="flex flex-wrap gap-3 items-end">
+   463→              <div>
+   464→                <Label htmlFor="tasa-usd">USD → CUP (vigente: {fmt(tasasVigentes.USD)})</Label>
+   465→                <div className="flex gap-2">
+   466→                  <Input id="tasa-usd" className="w-32" inputMode="decimal" value={formTasas.USD} onChange={(e) => setFormTasas((f) => ({ ...f, USD: e.target.value }))} />
+   467→                  <Button size="sm" variant="outline" onClick={() => actualizarTasa('USD')}>Actualizar</Button>
+   468→                </div>
+   469→              </div>
+   470→              <div>
+   471→                <Label htmlFor="tasa-eur">EUR → CUP (vigente: {fmt(tasasVigentes.EUR)})</Label>
+   472→                <div className="flex gap-2">
+   473→                  <Input id="tasa-eur" className="w-32" inputMode="decimal" value={formTasas.EUR} onChange={(e) => setFormTasas((f) => ({ ...f, EUR: e.target.value }))} />
+   474→                  <Button size="sm" variant="outline" onClick={() => actualizarTasa('EUR')}>Actualizar</Button>
+   475→                </div>
+   476→              </div>
+   477→            </CardContent>
+   478→          </Card>
+   479→          <Card>
+   480→            <CardHeader className="pb-2">
+   481→              <CardTitle className="text-base">Historial</CardTitle>
+   482→            </CardHeader>
+   483→            <CardContent className="p-0 overflow-x-auto max-h-72 overflow-y-auto">
+   484→              <Table>
+   485→                <TableHeader>
+   486→                  <TableRow>
+   487→                    <TableHead>Moneda</TableHead>
+   488→                    <TableHead className="text-right">Valor CUP</TableHead>
+   489→                    <TableHead>Vigencia</TableHead>
+   490→                    <TableHead>Actualizado por</TableHead>
+   491→                  </TableRow>
+   492→                </TableHeader>
+   493→                <TableBody>
+   494→                  {tasas.map((t) => (
+   495→                    <TableRow key={t.id}>
+   496→                      <TableCell className="font-medium">{t.moneda}</TableCell>
+   497→                      <TableCell className="text-right">{fmt(t.valorCUP)}</TableCell>
+   498→                      <TableCell className="text-xs">{fmtFechaHora(t.fechaVigencia)}</TableCell>
+   499→                      <TableCell className="text-xs">{t.usuario?.username ?? 'sistema'}</TableCell>
+   500→                    </TableRow>
+   501→                  ))}
+   502→                </TableBody>
+   503→              </Table>
+   504→            </CardContent>
+   505→          </Card>
+   506→        </TabsContent>
+   507→
+   508→        {/* ============ AJUSTES ============ */}
+   509→        <TabsContent value="ajustes" className="space-y-4">
+   510→          <Card>
+   511→            <CardHeader className="pb-2">
+   512→              <CardTitle className="text-base">Ticket de venta</CardTitle>
+   513→            </CardHeader>
+   514→            <CardContent className="space-y-3 max-w-md">
+   515→              <div>
+   516→                <Label htmlFor="aj-ancho">Ancho del ticket</Label>
+   517→                <Select value={formAjustes.ticketAncho} onValueChange={(v) => setFormAjustes((f) => ({ ...f, ticketAncho: v }))}>
+   518→                  <SelectTrigger id="aj-ancho">
+   519→                    <SelectValue />
+   520→                  </SelectTrigger>
+   521→                  <SelectContent>
+   522→                    <SelectItem value="58">58 mm</SelectItem>
+   523→                    <SelectItem value="80">80 mm</SelectItem>
+   524→                  </SelectContent>
+   525→                </Select>
+   526→              </div>
+   527→              <div>
+   528→                <Label htmlFor="aj-enc">Encabezado (opcional)</Label>
+   529→                <Input id="aj-enc" value={formAjustes.ticketEncabezado} onChange={(e) => setFormAjustes((f) => ({ ...f, ticketEncabezado: e.target.value }))} />
+   530→              </div>
+   531→              <div>
+   532→                <Label htmlFor="aj-pie">Pie (opcional)</Label>
+   533→                <Input id="aj-pie" value={formAjustes.ticketPie} onChange={(e) => setFormAjustes((f) => ({ ...f, ticketPie: e.target.value }))} />
+   534→              </div>
+   535→            </CardContent>
+   536→          </Card>
+   537→          <Card>
+   538→            <CardHeader className="pb-2">
+   539→              <CardTitle className="text-base">Porcentaje del admin</CardTitle>
+   540→            </CardHeader>
+   541→            <CardContent className="max-w-md space-y-2">
+   542→              <div>
+   543→                <Label htmlFor="aj-pct">porcentajeAdmin (%) — pago = % × total vendido del taller</Label>
+   544→                <Input id="aj-pct" inputMode="decimal" value={formAjustes.porcentajeAdmin} onChange={(e) => setFormAjustes((f) => ({ ...f, porcentajeAdmin: e.target.value }))} />
+   545→              </div>
+   546→              <p className="text-xs text-muted-foreground">
+   547→                El admin se registra como operario de rama ADMIN; su línea aparece en la liquidación diaria.
+   548→              </p>
+   549→            </CardContent>
+   550→          </Card>
+   551→          <Button onClick={guardarAjustes} className="bg-brand-red hover:bg-brand-red-hover">
+   552→            <Save className="h-4 w-4 mr-1" /> Guardar ajustes <Kbd className="ml-2 border-white/40 bg-white/15 text-white">Ctrl</Kbd>+<Kbd className="border-white/40 bg-white/15 text-white">S</Kbd>
+   553→          </Button>
+   554→        </TabsContent>
+   555→      </Tabs>
+   556→
+   557→      {/* ============ Modales ============ */}
+   558→      <Dialog open={modalTaller} onOpenChange={setModalTaller}>
+   559→        <DialogContent className="max-w-sm">
+   560→          <DialogHeader>
+   561→            <DialogTitle>{tallerEdit.id ? 'Editar taller' : 'Nuevo taller'}</DialogTitle>
+   562→          </DialogHeader>
+   563→          <div className="space-y-3">
+   564→            <div>
+   565→              <Label htmlFor="t-nombre">Nombre</Label>
+   566→              <Input id="t-nombre" value={tallerEdit.datos.nombre} onChange={(e) => setTallerEdit((t) => ({ ...t, datos: { ...t.datos, nombre: e.target.value } }))} />
+   567→            </div>
+   568→            <div>
+   569→              <Label htmlFor="t-dir">Dirección</Label>
+   570→              <Input id="t-dir" value={tallerEdit.datos.direccion} onChange={(e) => setTallerEdit((t) => ({ ...t, datos: { ...t.datos, direccion: e.target.value } }))} />
+   571→            </div>
+   572→            <div>
+   573→              <Label htmlFor="t-tel">Teléfono</Label>
+   574→              <Input id="t-tel" value={tallerEdit.datos.telefono} onChange={(e) => setTallerEdit((t) => ({ ...t, datos: { ...t.datos, telefono: e.target.value } }))} />
+   575→            </div>
+   576→            <div className="flex items-center gap-2">
+   577→              <Switch
+   578→                id="t-activo"
+   579→                checked={tallerEdit.datos.activo}
+   580→                onCheckedChange={(v) => setTallerEdit((t) => ({ ...t, datos: { ...t.datos, activo: v } }))}
+   581→              />
+   582→              <Label htmlFor="t-activo">Activo</Label>
+   583→            </div>
+   584→          </div>
+   585→          <DialogFooter>
+   586→            <Button variant="outline" onClick={() => setModalTaller(false)}>Cancelar</Button>
+   587→            <Button onClick={guardarTaller} className="bg-brand-red hover:bg-brand-red-hover">
+   588→              Guardar <Kbd className="ml-2 border-white/40 bg-white/15 text-white">Ctrl</Kbd>+<Kbd className="border-white/40 bg-white/15 text-white">S</Kbd>
+   589→            </Button>
+   590→          </DialogFooter>
+   591→        </DialogContent>
+   592→      </Dialog>
+   593→
+   594→      <Dialog open={modalUsuario} onOpenChange={setModalUsuario}>
+   595→        <DialogContent className="max-w-sm">
+   596→          <DialogHeader>
+   597→            <DialogTitle>{usuarioEdit.id ? 'Editar usuario' : 'Nuevo usuario'}</DialogTitle>
+   598→          </DialogHeader>
+   599→          <div className="space-y-3">
+   600→            <div>
+   601→              <Label htmlFor="u-nombre">Nombre completo</Label>
+   602→              <Input id="u-nombre" value={usuarioEdit.datos.nombre} onChange={(e) => setUsuarioEdit((u) => ({ ...u, datos: { ...u.datos, nombre: e.target.value } }))} />
+   603→            </div>
+   604→            <div>
+   605→              <Label htmlFor="u-username">Usuario (acceso)</Label>
+   606→              <Input id="u-username" value={usuarioEdit.datos.username} onChange={(e) => setUsuarioEdit((u) => ({ ...u, datos: { ...u.datos, username: e.target.value } }))} />
+   607→            </div>
+   608→            <div>
+   609→              <Label htmlFor="u-pass">{usuarioEdit.id ? 'Contraseña (dejar vacía para no cambiar)' : 'Contraseña'}</Label>
+   610→              <Input id="u-pass" type="password" value={usuarioEdit.datos.password} onChange={(e) => setUsuarioEdit((u) => ({ ...u, datos: { ...u.datos, password: e.target.value } }))} />
+   611→            </div>
+   612→            <div>
+   613→              <Label htmlFor="u-rol">Rol</Label>
+   614→              <Select value={usuarioEdit.datos.rol} onValueChange={(v) => setUsuarioEdit((u) => ({ ...u, datos: { ...u.datos, rol: v } }))}>
+   615→                <SelectTrigger id="u-rol">
+   616→                  <SelectValue />
+   617→                </SelectTrigger>
+   618→                <SelectContent>
+   619→                  {ROLES.map((r) => (
+   620→                    <SelectItem key={r} value={r}>{ROL_LABEL[r]}</SelectItem>
+   621→                  ))}
+   622→                </SelectContent>
+   623→              </Select>
+   624→            </div>
+   625→            {usuarioEdit.datos.rol === 'VENDEDOR' && (
+   626→              <>
+   627→                <div>
+   628→                  <Label htmlFor="u-taller">Taller asignado</Label>
+   629→                  <Select value={usuarioEdit.datos.tallerId} onValueChange={(v) => setUsuarioEdit((u) => ({ ...u, datos: { ...u.datos, tallerId: v } }))}>
+   630→                    <SelectTrigger id="u-taller">
+   631→                      <SelectValue placeholder="Seleccione" />
+   632→                    </SelectTrigger>
+   633→                    <SelectContent>
+   634→                      {talleres.map((t) => (
+   635→                        <SelectItem key={t.id} value={t.id}>{t.nombre}</SelectItem>
+   636→                      ))}
+   637→                    </SelectContent>
+   638→                  </Select>
+   639→                </div>
+   640→                <div>
+   641→                  <Label htmlFor="u-operario">Operario vinculado</Label>
+   642→                  <Select value={usuarioEdit.datos.operarioId} onValueChange={(v) => setUsuarioEdit((u) => ({ ...u, datos: { ...u.datos, operarioId: v } }))}>
+   643→                    <SelectTrigger id="u-operario">
+   644→                      <SelectValue placeholder="Seleccione" />
+   645→                    </SelectTrigger>
+   646→                    <SelectContent>
+   647→                      {operarios.map((o) => (
+   648→                        <SelectItem key={o.id} value={o.id}>
+   649→                          {o.nombre} ({RAMA_LABEL[o.rama] ?? o.rama})
+   650→                        </SelectItem>
+   651→                      ))}
+   652→                    </SelectContent>
+   653→                  </Select>
+   654→                </div>
+   655→              </>
+   656→            )}
+   657→            <div className="flex items-center gap-2">
+   658→              <Switch
+   659→                id="u-activo"
+   660→                checked={usuarioEdit.datos.activo}
+   661→                onCheckedChange={(v) => setUsuarioEdit((u) => ({ ...u, datos: { ...u.datos, activo: v } }))}
+   662→              />
+   663→              <Label htmlFor="u-activo">Activo</Label>
+   664→            </div>
+   665→          </div>
+   666→          <DialogFooter>
+   667→            <Button variant="outline" onClick={() => setModalUsuario(false)}>Cancelar</Button>
+   668→            <Button onClick={guardarUsuario} className="bg-brand-red hover:bg-brand-red-hover">
+   669→              Guardar <Kbd className="ml-2 border-white/40 bg-white/15 text-white">Ctrl</Kbd>+<Kbd className="border-white/40 bg-white/15 text-white">S</Kbd>
+   670→            </Button>
+   671→          </DialogFooter>
+   672→        </DialogContent>
+   673→      </Dialog>
+   674→
+   675→      <Dialog open={modalOperario} onOpenChange={setModalOperario}>
+   676→        <DialogContent className="max-w-sm max-h-[85vh] overflow-y-auto">
+   677→          <DialogHeader>
+   678→            <DialogTitle>{operarioEdit.id ? 'Editar operario' : 'Nuevo operario'}</DialogTitle>
+   679→          </DialogHeader>
+   680→          <div className="space-y-3">
+   681→            <div>
+   682→              <Label htmlFor="o-nombre">Nombre</Label>
+   683→              <Input id="o-nombre" value={operarioEdit.datos.nombre} onChange={(e) => setOperarioEdit((o) => ({ ...o, datos: { ...o.datos, nombre: e.target.value } }))} />
+   684→            </div>
+   685→            <div>
+   686→              <Label htmlFor="o-rama">Rama</Label>
+   687→              <Select value={operarioEdit.datos.rama} onValueChange={(v) => setOperarioEdit((o) => ({ ...o, datos: { ...o.datos, rama: v } }))}>
+   688→                <SelectTrigger id="o-rama">
+   689→                  <SelectValue />
+   690→                </SelectTrigger>
+   691→                <SelectContent>
+   692→                  {RAMAS.map((r) => (
+   693→                    <SelectItem key={r} value={r}>{RAMA_LABEL[r]}</SelectItem>
+   694→                  ))}
+   695→                </SelectContent>
+   696→              </Select>
+   697→            </div>
+   698→            <div>
+   699→              <Label>Talleres asignados (rotación N:M)</Label>
+   700→              <div className="space-y-1.5 border rounded-lg p-2 max-h-40 overflow-y-auto">
+   701→                {talleres.map((t) => (
+   702→                  <label key={t.id} className="flex items-center gap-2 text-sm">
+   703→                    <input
+   704→                      type="checkbox"
+   705→                      checked={operarioEdit.datos.tallerIds.includes(t.id)}
+   706→                      onChange={(e) =>
+   707→                        setOperarioEdit((o) => ({
+   708→                          ...o,
+   709→                          datos: {
+   710→                            ...o.datos,
+   711→                            tallerIds: e.target.checked
+   712→                              ? [...o.datos.tallerIds, t.id]
+   713→                              : o.datos.tallerIds.filter((x) => x !== t.id),
+   714→                          },
+   715→                        }))
+   716→                      }
+   717→                    />
+   718→                    {t.nombre}
+   719→                  </label>
+   720→                ))}
+   721→              </div>
+   722→            </div>
+   723→            <div className="flex items-center gap-2">
+   724→              <Switch
+   725→                id="o-activo"
+   726→                checked={operarioEdit.datos.activo}
+   727→                onCheckedChange={(v) => setOperarioEdit((o) => ({ ...o, datos: { ...o.datos, activo: v } }))}
+   728→              />
+   729→              <Label htmlFor="o-activo">Activo</Label>
+   730→            </div>
+   731→          </div>
+   732→          <DialogFooter>
+   733→            <Button variant="outline" onClick={() => setModalOperario(false)}>Cancelar</Button>
+   734→            <Button onClick={guardarOperario} className="bg-brand-red hover:bg-brand-red-hover">
+   735→              Guardar <Kbd className="ml-2 border-white/40 bg-white/15 text-white">Ctrl</Kbd>+<Kbd className="border-white/40 bg-white/15 text-white">S</Kbd>
+   736→            </Button>
+   737→          </DialogFooter>
+   738→        </DialogContent>
+   739→      </Dialog>
+   740→
+   741→      {/* ============ Modal restablecer contraseña ============ */}
+   742→      <Dialog open={modalPassword} onOpenChange={setModalPassword}>
+   743→        <DialogContent className="max-w-sm">
+   744→          <DialogHeader>
+   745→            <DialogTitle>Restablecer contraseña</DialogTitle>
+   746→          </DialogHeader>
+   747→          <form
+   748→            onSubmit={(e) => {
+   749→              e.preventDefault()
+   750→              confirmarResetPassword()
+   751→            }}
+   752→            className="space-y-3"
+   753→          >
+   754→            <p className="text-sm text-muted-foreground">
+   755→              Usuario: <strong className="text-foreground font-mono">{formPassword.username}</strong>
+   756→            </p>
+   757→            <div>
+   758→              <Label htmlFor="rp-pass">Nueva contraseña (mínimo 6 caracteres)</Label>
+   759→              <Input
+   760→                id="rp-pass"
+   761→                type="password"
+   762→                value={formPassword.password}
+   763→                onChange={(e) => setFormPassword((f) => ({ ...f, password: e.target.value }))}
+   764→                minLength={6}
+   765→                autoFocus
+   766→                autoComplete="new-password"
+   767→              />
+   768→            </div>
+   769→            <DialogFooter>
+   770→              <Button type="button" variant="outline" onClick={() => setModalPassword(false)}>
+   771→                Cancelar
+   772→              </Button>
+   773→              <Button type="submit" className="bg-brand-red hover:bg-brand-red-hover">
+   774→                Guardar
+   775→              </Button>
+   776→            </DialogFooter>
+   777→          </form>
+   778→        </DialogContent>
+   779→      </Dialog>
+   780→    </div>
+   781→  )
+   782→}
+   783→
