@@ -38,7 +38,7 @@ export function codigoComprobante(n: number): string {
  * (el PRD sugiere T{tallerId}-{secuencial}; se usa el número de taller para brevedad).
  */
 export function codigoInternoSugerido(tallerNum: number, secuencial: number): string {
-  return `T${tallerNum}-${String(secuencial).padStart(6, '0')}`
+  return `T${tallerNum}${String(secuencial).padStart(6, '0')}`
 }
 
 /** Número corto de taller a partir de su id (estable, solo dígitos). */
