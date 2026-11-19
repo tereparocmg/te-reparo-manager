@@ -11,6 +11,7 @@ import { Search, Printer, Undo2 } from 'lucide-react'
 import { api } from '@/lib/api-client'
 import { useApp } from '@/lib/store'
 import { fmt, fmtCUP, fmtFechaHora, esServicio } from '@/lib/formato'
+import { imprimirTicket } from '@/lib/imprimir'
 import { TicketDevolucion } from '../ticket'
 
 interface VentaBusqueda {
@@ -309,7 +310,7 @@ export function Devoluciones() {
             )}
           </div>
           <div className="flex gap-2 justify-center p-3 bg-card border-t">
-            <Button onClick={() => window.print()}>
+            <Button onClick={() => imprimirTicket(ajustes.ticketAncho ?? '58')}>
               <Printer className="h-4 w-4 mr-1" /> Imprimir
             </Button>
             <Button variant="outline" onClick={() => setTicket(null)}>Cerrar</Button>

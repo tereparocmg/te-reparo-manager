@@ -13,6 +13,7 @@ import { Printer, Download, Eye, Search, FileText } from 'lucide-react'
 import { api, descargar } from '@/lib/api-client'
 import { useApp } from '@/lib/store'
 import { fmt, fmtCUP, fmtFechaHora, ESTADO_VENTA_LABEL, METODO_PAGO_LABEL, RAMA_LABEL } from '@/lib/formato'
+import { imprimirTicket } from '@/lib/imprimir'
 import { useTablaTeclado } from '@/hooks/use-tabla-teclado'
 import { usePaginacion } from '@/hooks/use-paginacion'
 import { TablePagination, FilasEsqueleto } from '../table-pagination'
@@ -160,7 +161,7 @@ export function Ventas() {
     try {
       await api.post(`/api/ventas/reimprimir?id=${detalle.venta.id}`)
       toast.success('Reimpresión registrada en auditoría')
-      window.print()
+      imprimirTicket(detalle.ajustes.ticketAncho ?? '58')
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Error')
     }
