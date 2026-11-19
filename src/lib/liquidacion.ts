@@ -12,6 +12,10 @@
 //  - ADMIN: porcentajeAdmin × total vendido del taller ese día (default 0) MÁS el
 //    pago individual de las líneas de venta que tenga asignadas (snapshot).
 //  - Los ajustes (devoluciones post-cierre) se restan de la línea del operario.
+
+// Cambio en las reglas del vendedor:
+// acumulado individual de todos vendedores 
+
 import { Decimal, d2 } from './money'
 import { calcularPagoLinea } from './pagos'
 
@@ -75,7 +79,10 @@ export interface ResultadoLiquidacion {
 }
 
 /** Pago individual acumulado de un operario por las líneas que tiene asignadas. */
-function acumuladoIndividual(operarioId: string, ventas: VentaLiquidacion[]): { monto: Decimal; lineas: number } {
+function acumuladoIndividual(
+  operarioId: string,
+  ventas: VentaLiquidacion[]
+): { monto: Decimal; lineas: number } {
   let monto = new Decimal(0)
   let lineas = 0
   for (const v of ventas) {
@@ -98,6 +105,32 @@ function acumuladoIndividual(operarioId: string, ventas: VentaLiquidacion[]): { 
   return { monto: d2(monto), lineas }
 }
 
+function repartirEquitativo(total: Decimal, n: number): Decimal[] {
+  if (n <= 0) return []
+  const base = d2(total.dividedBy(n))
+  const partes = Array.from({ length: n }, () => base)
+  const resto = d2(total.minus(base.times(n)))
+  if (!resto.isZero()) {
+    partes[0] = d2(partes[0].plus(resto))
+  }
+  return partes
+}
+
+function repartirEquitativoVendedor(ventas: VentaLiquidacion[], operarios: OperarioLiq[]): Decimal {
+
+  let montoEquitativo = new Decimal(0)
+
+  const vendedores = operarios.filter((o) => o.rama === 'VENDEDOR')
+
+  vendedores.forEach((ven) => {
+    const ind = acumuladoIndividual(ven.id, ventas)
+    montoEquitativo = montoEquitativo.plus(ind.monto)
+  });
+
+  return montoEquitativo
+
+}
+
 export function calcularLiquidacion(input: {
   ventas: VentaLiquidacion[]
   operarios: OperarioLiq[]
@@ -105,11 +138,67 @@ export function calcularLiquidacion(input: {
   porcentajeAdmin: Decimal
 }): ResultadoLiquidacion {
   const { ventas, operarios, ajustes, porcentajeAdmin } = input
-
+  
   const totalVentasDia = d2(ventas.reduce((acc, v) => acc.plus(v.totalCUP), new Decimal(0)))
-  const tecnicos = operarios.filter((o) => o.rama === 'INFORMATICO' || o.rama === 'ELECTRONICO')
-  const repartoEquitativo =
-    tecnicos.length > 0 ? d2(totalVentasDia.dividedBy(tecnicos.length)) : new Decimal(0)
+
+  // ---- Pools de reparto equitativo por rama técnica ----
+  // Cada rama se reparte por separado. Si en el futuro quisieras que
+  // INFORMATICO + ELECTRONICO compartan un solo pool, basta con agrupar
+  // ambas ramas en un mismo conjunto aquí.
+  const RAMAS_REPARTO = ['INFORMATICO', 'ELECTRONICO'] as const
+
+  interface PoolRama {
+    total: Decimal
+    operarios: OperarioLiq[]
+    lineas: number
+    montoPorOperario: Map<string, Decimal>
+  }
+
+  console.log("Ventas", ventas)
+
+  ventas.forEach((v) => {
+    console.log(v.items)
+  })
+
+  const poolPorRama = new Map<string, PoolRama>()
+
+  for (const rama of RAMAS_REPARTO) {
+    const ops = operarios.filter((o) => o.rama === rama)
+    const ids = new Set(ops.map((o) => o.id))
+
+    let total = new Decimal(0)
+    let nLineas = 0
+
+    for (const v of ventas) {
+      for (const it of v.items) {
+        if (it.operarioId && ids.has(it.operarioId)) {
+          total = total.plus(
+            calcularPagoLinea({
+              tipo: it.pagoOperarioTipoSnapshot,
+              valor: it.pagoOperarioValorSnapshot,
+              cantidad: it.cantidad,
+              subtotalCUP: it.subtotalCUP,
+              costoAdicionalCUP: it.costoAdicionalCUP,
+              operarioAsignado: true,
+            })
+          )
+          nLineas++
+        }
+      }
+    }
+
+    total = d2(total)
+    const partes = repartirEquitativo(total, ops.length)
+    const montoPorOperario = new Map<string, Decimal>()
+    ops.forEach((o, i) => montoPorOperario.set(o.id, partes[i]))
+
+    poolPorRama.set(rama, {
+      total,
+      operarios: ops,
+      lineas: nLineas,
+      montoPorOperario,
+    })
+  }
 
   const lineas: LineaCalculada[] = []
   const porOperario = new Map<string, LineaCalculada>()
@@ -154,21 +243,8 @@ export function calcularLiquidacion(input: {
       }
     } else if (op.rama === 'VENDEDOR') {
       // Vendedor presencial: regla grupal — total del taller íntegro a cada uno
-      linea = {
-        operarioId: op.id,
-        operarioNombre: op.nombre,
-        rama: op.rama,
-        tipo: 'GRUPO',
-        montoCUP: totalVentasDia,
-        detalle: {
-          tipo: 'Regla grupal: total vendido del taller',
-          base: totalVentasDia.toFixed(2),
-          ventas: ventas.length,
-          formula: 'total taller del día (íntegro a cada vendedor activo)',
-        },
-      }
-    } else if (op.rama === 'INFORMATICO' || op.rama === 'ELECTRONICO') {
       const ind = acumuladoIndividual(op.id, ventas)
+
       linea = {
         operarioId: op.id,
         operarioNombre: op.nombre,
@@ -177,9 +253,28 @@ export function calcularLiquidacion(input: {
         montoCUP: ind.monto,
         detalle: {
           tipo: 'Acumulado individual por líneas asignadas',
-          lineas: ind.lineas,
-          repartoEquitativo: repartoEquitativo.toFixed(2), // solo referencia
+          base: ind.monto.toFixed(2),
+          ventas: ventas.length,
+          repartoEquitativo: repartirEquitativoVendedor(ventas, operarios).toFixed(2),
           formula: 'Σ pagoOperario snapshot (FIJO×cant | %×(subtotal−costo int.))',
+        },
+      }
+    } else if (op.rama === 'INFORMATICO' || op.rama === 'ELECTRONICO') {
+      const pool = poolPorRama.get(op.rama)!
+      const monto = pool.montoPorOperario.get(op.id) ?? new Decimal(0)
+      const ind  = acumuladoIndividual(op.id, ventas)
+      linea = {
+        operarioId: op.id,
+        operarioNombre: op.nombre,
+        rama: op.rama,
+        tipo: 'INDIVIDUAL',
+        montoCUP: ind.monto,
+        detalle: {
+          tipo: 'Reparto equitativo por rama',
+          base: pool.total.toFixed(2),
+          lineas: pool.lineas,
+          repartoEquitativo: monto.toFixed(2),
+          formula: `(Σ pagoOperario rama ${op.rama}) ÷ ${pool.operarios.length} operarios = ${monto.toFixed(2)}`,
         },
       }
     } else if (op.rama === 'ADMIN') {

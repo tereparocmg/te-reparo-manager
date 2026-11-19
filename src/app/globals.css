@@ -198,6 +198,11 @@
 }
 
 /* ===== Impresión de tickets (58/80 mm) — solo se imprime .solo-impresion ===== */
+/* El @page (tamaño exacto del papel, margen 0) y el des-anclaje de transfor-
+   maciones los inyecta imprimirTicket() (src/lib/imprimir.ts) en runtime:
+   escribirlos aquí no sirve porque el minificador del build reescribe
+   «translate: none» como una matriz identidad que sigue arrastrando los
+   position:fixed de los diálogos centrados. */
 @media print {
   body * {
     visibility: hidden !important;
@@ -210,13 +215,13 @@
     position: fixed !important;
     left: 0 !important;
     top: 0 !important;
-    margin: 0 !important;
+    /*margin: 0 !important;*/
     padding: 2mm !important;
+    margin-bottom: 4rem !important;
+    /* border-box: el padding cuenta dentro del ancho (58/80 mm) — sin desborde */
+    box-sizing: border-box !important;
     box-shadow: none !important;
     max-height: none !important;
     overflow: visible !important;
-  }
-  @page {
-    margin: 4mm;
   }
 }

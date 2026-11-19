@@ -99,11 +99,10 @@ export interface TicketVentaData {
   ancho: string // '58' | '80'
 }
 
-function Encabezado({ ancho, titulo }: { ancho: string; titulo: string }) {
+function Encabezado({ titulo }: { titulo: string }) {
   return (
     <div className="text-center border-b border-dashed border-black pb-1 mb-1">
       <div className="font-bold text-[11px] uppercase tracking-wide">{titulo}</div>
-      <div className="text-[9px] opacity-70">ancho {ancho} mm</div>
     </div>
   )
 }
@@ -112,12 +111,12 @@ export function TicketVenta({ data }: { data: TicketVentaData }) {
   const recibido = data.pagos.reduce((a, p) => a + (parseFloat(String(p.montoCUP)) || 0), 0)
   const cambio = Math.round((recibido - parseFloat(String(data.totalCUP))) * 100) / 100
   return (
-    <div className="solo-impresion bg-white text-black mx-auto p-2 font-mono" style={{ width: `${data.ancho}mm`, fontSize: data.ancho === '58' ? '9px' : '10.5px' }}>
+    <div className="solo-impresion bg-white text-black mx-auto p-2 font-mono pb-6" style={{ width: `${data.ancho}mm`, fontSize: data.ancho === '58' ? '9px' : '10.5px' }}>
       <div className="text-center font-bold">{data.encabezado || data.taller.nombre}</div>
       <div className="text-center text-[9px]">{data.taller.nombre}</div>
       <div className="text-center text-[9px]">{data.taller.direccion}</div>
       <div className="text-center text-[9px]">Tel: {data.taller.telefono}</div>
-      <Encabezado ancho={data.ancho} titulo="Venta" />
+      <Encabezado titulo="Venta" />
       <div className="flex justify-between">
         <span>{data.codigo}</span>
         <span>{fmtFechaHora(data.fecha)}</span>
@@ -133,7 +132,7 @@ export function TicketVenta({ data }: { data: TicketVentaData }) {
             </span>
           </div>
           {it.descripcionAdicional && (
-            <div style={{ fontSize: '0.82em' }} className="opacity-80 leading-tight break-words">
+            <div style={{ fontSize: '0.82em' }} className="opacity-80 leading-tight wrap-break-word">
               {it.descripcionAdicional}
             </div>
           )}
@@ -178,6 +177,7 @@ export function TicketVenta({ data }: { data: TicketVentaData }) {
       <div className="text-center text-[9px] mt-2 pt-1 border-t border-dashed border-black">
         {data.pie || '¡Gracias por su compra!'}
       </div>
+      <div className="border-t border-dashed border-black my-1" />
     </div>
   )
 }
@@ -198,7 +198,7 @@ export function TicketDevolucion({ data }: { data: TicketDevolucionData }) {
   return (
     <div className="solo-impresion bg-white text-black mx-auto p-2 font-mono" style={{ width: `${data.ancho}mm`, fontSize: data.ancho === '58' ? '9px' : '10.5px' }}>
       <div className="text-center font-bold">{data.taller.nombre}</div>
-      <Encabezado ancho={data.ancho} titulo="Devolución" />
+      <Encabezado titulo="Devolución" />
       <div className="flex justify-between">
         <span>{data.codigo}</span>
         <span>{fmtFechaHora(data.fecha)}</span>
@@ -221,6 +221,7 @@ export function TicketDevolucion({ data }: { data: TicketDevolucionData }) {
       </div>
       <div className="text-[9px] mt-1">Motivo: {data.motivo}</div>
       <div className="text-center text-[9px] mt-1">Producto recibido como DEFECTUOSO</div>
+      <div className="border-t border-dashed border-black my-1" />
     </div>
   )
 }
@@ -247,7 +248,7 @@ export function TicketComprobante({ data }: { data: ComprobanteData }) {
     <div className="solo-impresion bg-white text-black mx-auto p-2 font-mono" style={{ width: '80mm', fontSize: '10.5px' }}>
       <div className="text-center font-bold">{data.taller.nombre}</div>
       <div className="text-center text-[9px]">{data.taller.direccion}</div>
-      <Encabezado ancho="80" titulo="Comprobante de pago" />
+      <Encabezado titulo="Comprobante de pago" />
       <div className="flex justify-between">
         <span>{data.codigo}</span>
         <span>{fmtFechaHora(data.fechaPago)}</span>
@@ -302,6 +303,7 @@ export function TicketComprobante({ data }: { data: ComprobanteData }) {
       <div className="text-center text-[9px] mt-2 pt-1 border-t border-dashed border-black">
         Firma operario: ____________________
       </div>
+      <div className="border-t border-dashed border-black my-2" />
     </div>
   )
 }

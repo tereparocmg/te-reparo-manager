@@ -112,6 +112,7 @@ export const GET = route(async (req: NextRequest) => {
             vendedorUsuarioId: v.vendedorUsuarioId,
             items: v.items.map((it) => ({
               operarioId: it.operarioId,
+              operarioRama: operariosInfo.find((op) => op.id === it.operarioId)?.rama,
               cantidad: it.cantidad,
               subtotalCUP: D(it.subtotalCUP),
               // Costo interno en CUP con las tasas SNAPSHOT de la venta (§2.1/§2.2)
@@ -174,6 +175,7 @@ async function lineasPersistidas(
     orderBy: { id: 'asc' },
     take: 500,
   })
+
   return {
     totalVentasDia: ventas.reduce((acc, v) => acc.plus(D(v.totalCUP)), D(0)),
     totalLiquidacion: totalCUP,

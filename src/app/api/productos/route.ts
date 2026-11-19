@@ -40,10 +40,10 @@ export const GET = route(async (req: NextRequest) => {
     ...(q
       ? {
           OR: [
-            { nombre: { contains: q } },
-            { codigoInterno: { contains: q } },
-            { codigoBarras: { contains: q } },
-            { categoria: { contains: q } },
+            { nombre: { contains: q, mode: 'insensitive' } },
+            { codigoInterno: { contains: q, mode: 'insensitive' } },
+            { codigoBarras: { contains: q, mode: 'insensitive' } },
+            { categoria: { contains: q, mode: 'insensitive' } },
           ],
         }
       : {}),
