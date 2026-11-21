@@ -593,30 +593,34 @@ export function Inventario() {
                       <div className="flex justify-end gap-1">
                         {!esServicio(p.tipo) && p.activo && (
                           <>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              title="Entrada de inventario"
-                              onClick={() => {
-                                setProductoAccion(p);
-                                setModalEntrada(true);
-                              }}
-                              aria-label={`Entrada de ${p.nombre}`}
-                            >
-                              <PackagePlus className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              title="Baja por defectuoso"
-                              onClick={() => {
-                                setProductoAccion(p);
-                                setModalBaja(true);
-                              }}
-                              aria-label={`Baja de ${p.nombre}`}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                            {esAdmin && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                title="Entrada de inventario"
+                                onClick={() => {
+                                  setProductoAccion(p);
+                                  setModalEntrada(true);
+                                }}
+                                aria-label={`Entrada de ${p.nombre}`}
+                              >
+                                <PackagePlus className="h-4 w-4" />
+                              </Button>
+                            )}
+                            {esAdmin && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                title="Baja por defectuoso"
+                                onClick={() => {
+                                  setProductoAccion(p);
+                                  setModalBaja(true);
+                                }}
+                                aria-label={`Baja de ${p.nombre}`}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )}
                             {esAdmin && (
                               <Button
                                 size="sm"
@@ -654,15 +658,17 @@ export function Inventario() {
                         >
                           <Tag className="h-4 w-4" />
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          title="Editar"
-                          onClick={() => abrirEditar(p)}
-                          aria-label={`Editar ${p.nombre}`}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
+                        {esAdmin && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            title="Editar"
+                            onClick={() => abrirEditar(p)}
+                            aria-label={`Editar ${p.nombre}`}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                        )}
                         {esAdmin && p.activo && (
                           <ConfirmarPeligroso
                             etiqueta="Desactivar"
@@ -847,7 +853,7 @@ export function Inventario() {
                   Campos sensibles (solo ADMIN)
                 </div>
                 <div>
-                  <Label htmlFor="prod-costo">Costo (CUP)</Label>
+                  <Label htmlFor="prod-costo">Costo (USD)</Label>
                   <Input
                     id="prod-costo"
                     inputMode="decimal"
